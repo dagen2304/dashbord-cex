@@ -1,7 +1,33 @@
+# NOC INFRA Dashboard — orchestration PRODUCTION
+# Un seul point d'entrée : Nginx (port 80) sert l'interface et relaie /api vers le backend.
+# PostgreSQL, Redis, InfluxDB et l'API ne sont pas exposés sur l'hôte.
+
+x-backend-env: &backend-env
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL est requis dans .env}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  INFLUXDB_URL: ${INFLUXDB_URL:-http://influxdb:8086}
+  INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
+  INFLUXDB_ORG: ${INFLUXDB_ORG:-noc_org}
+  INFLUXDB_BUCKET: ${INFLUXDB_BUCKET:-noc_metrics}
+  SECRET_KEY: ${SECRET_KEY:?SECRET_KEY est requis dans .env}
+  JWT_SECRET: ${JWT_SECRET:?JWT_SECRET est requis dans .env}
+  ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+  ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+  ACCESS_TOKEN_MINUTES: ${ACCESS_TOKEN_MINUTES:-480}
+  SMTP_USER: ${SMTP_USER:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  CORS_ORIGINS: ${CORS_ORIGINS:-}
+  TZ: Africa/Douala
+
+x-backend-deps: &backend-deps
+  db:
+    condition: service_healthy
+  influxdb:
+    condition: service_healthy
+  redis:
+    condition: service_healthy
+
 services:
-  # ----------------------------------------------------
-  # Base de données PostgreSQL (Inventaire & Utilisateurs)
-  # ----------------------------------------------------
   db:
     image: postgres:15-alpine
     container_name: noc_postgres
@@ -12,8 +38,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD est requis dans .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    networks:
-      - noc_network
+    networks: [noc_network]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-noc_admin} -d ${POSTGRES_DB:-noc_dashboard}"]
       interval: 10s
@@ -21,161 +46,95 @@ services:
       retries: 5
       start_period: 10s
 
-  # ----------------------------------------------------
-  # Base de données Time-Series InfluxDB (Métriques Temps Réel)
-  # ----------------------------------------------------
   influxdb:
     image: influxdb:2.7-alpine
     container_name: noc_influxdb
     restart: always
     environment:
-      - DOCKER_INFLUXDB_INIT_MODE=${DOCKER_INFLUXDB_INIT_MODE:-setup}
-      - DOCKER_INFLUXDB_INIT_USERNAME=${DOCKER_INFLUXDB_INIT_USERNAME:-noc_operator}
-      - DOCKER_INFLUXDB_INIT_PASSWORD=${DOCKER_INFLUXDB_INIT_PASSWORD:?DOCKER_INFLUXDB_INIT_PASSWORD est requis dans .env}
-      - DOCKER_INFLUXDB_INIT_ORG=${DOCKER_INFLUXDB_INIT_ORG:-noc_org}
-      - DOCKER_INFLUXDB_INIT_BUCKET=${DOCKER_INFLUXDB_INIT_BUCKET:-noc_metrics}
-      - DOCKER_INFLUXDB_INIT_RETENTION=${DOCKER_INFLUXDB_INIT_RETENTION:-30d}
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${DOCKER_INFLUXDB_INIT_ADMIN_TOKEN:?DOCKER_INFLUXDB_INIT_ADMIN_TOKEN est requis dans .env}
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${DOCKER_INFLUXDB_INIT_USERNAME:-noc_operator}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${DOCKER_INFLUXDB_INIT_PASSWORD:?DOCKER_INFLUXDB_INIT_PASSWORD est requis dans .env}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-noc_org}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-noc_metrics}
+      DOCKER_INFLUXDB_INIT_RETENTION: ${DOCKER_INFLUXDB_INIT_RETENTION:-90d}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
     volumes:
       - influxdb_data:/var/lib/influxdb2
-    networks:
-      - noc_network
+    networks: [noc_network]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      test: ["CMD", "influx", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 15s
 
-  # ----------------------------------------------------
-  # Redis Broker (Celery & Caching)
-  # ----------------------------------------------------
   redis:
     image: redis:7-alpine
     container_name: noc_redis
     restart: always
-    networks:
-      - noc_network
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    networks: [noc_network]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 3s
       retries: 5
-      start_period: 5s
 
-  # ----------------------------------------------------
-  # API Backend FastAPI
-  # ----------------------------------------------------
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    build: ./backend
+    image: noc-backend:latest
     container_name: noc_backend
     restart: always
-    ports:
-      - "8000:8000"
-    environment:
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL est requis dans .env}
-      - INFLUXDB_URL=${INFLUXDB_URL:-http://influxdb:8086}
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-noc_org}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-noc_metrics}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY est requis dans .env}
-      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?INTERNAL_API_KEY est requis dans .env}
-    depends_on:
-      db:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - noc_network
+    environment: *backend-env
+    depends_on: *backend-deps
+    networks: [noc_network]
     deploy:
       resources:
         limits:
           memory: 1G
 
-  # ----------------------------------------------------
-  # Celery Worker (Exécution des tâches de polling)
-  # ----------------------------------------------------
   celery_worker:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: noc-backend:latest
     container_name: noc_celery_worker
     restart: always
-    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concurrency=4
-    environment:
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL est requis dans .env}
-      - INFLUXDB_URL=${INFLUXDB_URL:-http://influxdb:8086}
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-noc_org}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-noc_metrics}
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY est requis dans .env}
+    command: celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concurrency=8
+    environment: *backend-env
     depends_on:
-      db:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - noc_network
+      <<: *backend-deps
+      backend:
+        condition: service_started
+    networks: [noc_network]
     deploy:
       resources:
         limits:
           memory: 2G
 
-  # ----------------------------------------------------
-  # Celery Beat (Planificateur de Polling Récurrent)
-  # ----------------------------------------------------
   celery_beat:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: noc-backend:latest
     container_name: noc_celery_beat
     restart: always
-    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info
-    environment:
-      - REDIS_URL=${REDIS_URL:-redis://redis:6379/0}
-      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL est requis dans .env}
-      - INFLUXDB_URL=${INFLUXDB_URL:-http://influxdb:8086}
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-noc_org}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-noc_metrics}
-      - SECRET_KEY=${SECRET_KEY:?SECRET_KEY est requis dans .env}
+    # Fichier d'état de Beat dans /tmp : l'utilisateur non-root ne peut pas écrire dans /app.
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+    environment: *backend-env
     depends_on:
-      db:
-        condition: service_healthy
-      influxdb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - noc_network
+      <<: *backend-deps
+      backend:
+        condition: service_started
+    networks: [noc_network]
     deploy:
       resources:
         limits:
-          memory: 512M
+          memory: 256M
 
-  # ----------------------------------------------------
-  # Frontend React (Vite build → Nginx)
-  # ----------------------------------------------------
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    build: ./frontend
     container_name: noc_frontend
     restart: always
     ports:
-      - "80:80"
+      - "${HTTP_PORT:-80}:80"
     depends_on:
       - backend
-    networks:
-      - noc_network
+    networks: [noc_network]
     deploy:
       resources:
         limits:

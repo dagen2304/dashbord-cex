@@ -1,31 +1,30 @@
-# Web Framework & Server
-fastapi>=0.100.0
-uvicorn[standard]>=0.22.0
-pydantic[email]>=2.0
-pydantic-settings>=2.0
-python-multipart>=0.0.6
+# Versions figées (testées). Mettre à jour volontairement, puis relancer les tests.
+# API
+fastapi==0.163.1
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.3
+python-multipart==0.0.34
 
-# Database & Time-Series
-SQLAlchemy>=2.0.0
-psycopg2-binary>=2.9.6
-influxdb-client>=1.36.0
+# Bases de données
+SQLAlchemy==2.1.8
+psycopg[binary]==3.3.9
+influxdb-client==1.50.0
+redis==8.1.0
 
-# Async Tasks Queue
-celery>=5.3.1
-redis>=4.6.0
+# Tâches
+celery==5.7.0
 
-# Security & Authentication
-passlib[bcrypt]>=1.7.4
-bcrypt>=4.0.1
-PyJWT>=2.7.0
-python-jose[cryptography]>=3.3.0
+# Sécurité
+bcrypt==5.0.0
+PyJWT==2.15.1
+cryptography==50.0.2
 
-# Data Analysis & Connectors
-pandas>=2.0.0
-requests>=2.31.0
-urllib3>=2.0.0
-pyvmomi>=8.0.1.0  # SDK officiel vSphere / vCenter
-paramiko>=3.2.0   # Connexion SSH pour CLI (Veritas Access/NetBackup)
-cryptography>=41.0.0
-openpyxl>=3.1.0
-pysnmp>=6.1.1     # SNMP fallback pour DataDomain & équipements réseau
+# Analyse, exports, collecteurs
+pandas==3.1.1
+numpy==2.5.5
+openpyxl==3.1.5
+requests==2.34.2
+urllib3==2.8.0
+pyvmomi==9.1.1.0
+paramiko==5.1.0

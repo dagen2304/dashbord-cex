@@ -17,7 +17,8 @@ metadata:
 #     --from-literal=INFLUXDB_TOKEN='...' \
 #     --from-literal=DOCKER_INFLUXDB_INIT_ADMIN_TOKEN='<identique à INFLUXDB_TOKEN>' \
 #     --from-literal=SECRET_KEY='...' \
-#     --from-literal=INTERNAL_API_KEY='...' \
+#     --from-literal=JWT_SECRET='<différent de SECRET_KEY>' \
+#     --from-literal=ADMIN_INITIAL_PASSWORD='<mot de passe du 1er admin, à vider après la 1re connexion>' \
 #     --from-literal=DATABASE_URL='postgresql://noc_admin:<POSTGRES_PASSWORD>@postgres:5432/noc_dashboard'
 #
 # Générer chaque valeur avec : python -c "import secrets; print(secrets.token_urlsafe(48))"
@@ -45,10 +46,9 @@ data:
   INFLUXDB_ORG: noc_org
   INFLUXDB_BUCKET: noc_metrics
   
-  # Frontend - IMPORTANT : Remplacez par l'URL publique de votre Backend
-  # Ex: http://192.168.1.10:30000 ou https://api.mon-noc.com
-  VITE_API_URL: ""
-  FRONTEND_URL: "http://cex-dashboard.adcm.orangecm"
+  # L'interface appelle l'API sur la même origine (/api) : aucune URL d'API à configurer.
+  ADMIN_USERNAME: admin
+  TZ: Africa/Douala
 # ==============================================================================
 # PERSISTENT VOLUMES (Stockage des données)
 # ==============================================================================
@@ -291,7 +291,7 @@ spec:
         - name: celery-worker
           image: dagen/v2-dashboard-backend:latest
           imagePullPolicy: Always
-          command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+          command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=8"]
           envFrom:
             - configMapRef:
                 name: noc-config
@@ -319,7 +319,7 @@ spec:
         - name: celery-beat
           image: dagen/v2-dashboard-backend:latest
           imagePullPolicy: Always
-          command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+          command: ["celery", "-A", "app.tasks.celery_app.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
           envFrom:
             - configMapRef:
                 name: noc-config

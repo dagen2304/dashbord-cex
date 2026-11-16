@@ -1,74 +1,67 @@
-from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
 
 class DeviceDiscoveryInput(BaseModel):
-    """
-    Payload reçu pour lancer le scan d'Auto-Discovery.
-    """
-    hostname_ip: str
-    username: str
-    password: str
+    """Adresse à sonder. Aucun identifiant n'est nécessaire pour la détection."""
+    hostname_ip: str = Field(min_length=1, max_length=253)
+
 
 class DeviceDiscoveryResponse(BaseModel):
-    """
-    Réponse du scanner d'Auto-Discovery.
-    """
     detected_type: str
     recommended_port: int
     category: str
     status: str
 
+
 class DeviceBase(BaseModel):
-    display_name: str
-    hostname_ip: str
+    display_name: str = Field(min_length=1, max_length=128)
+    hostname_ip: str = Field(min_length=1, max_length=253)
     device_type: str
-    category: str
-    port: int
-    username: str
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=128)
+
 
 class DeviceCreate(DeviceBase):
-    """
-    Payload de création finale de l'équipement (avec mot de passe en clair à chiffrer).
-    """
-    password: str
+    """Création. `category` est déduite du type côté serveur (champ toléré pour compatibilité)."""
+    password: str = Field(min_length=1, max_length=512)
+    category: Optional[str] = None
+
 
 class DeviceUpdate(BaseModel):
-    """
-    Payload de modification de l'équipement (tous les champs sont optionnels).
-    """
-    display_name: Optional[str] = None
-    hostname_ip: Optional[str] = None
+    display_name: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    hostname_ip: Optional[str] = Field(default=None, min_length=1, max_length=253)
     device_type: Optional[str] = None
     category: Optional[str] = None
-    port: Optional[int] = None
-    username: Optional[str] = None
-    password: Optional[str] = None
+    port: Optional[int] = Field(default=None, ge=1, le=65535)
+    username: Optional[str] = Field(default=None, min_length=1, max_length=128)
+    password: Optional[str] = Field(default=None, max_length=512)
     is_active: Optional[bool] = None
 
+
 class DeviceResponse(DeviceBase):
-    """
-    Réponse renvoyée à l'UI (DeviceContext / DeviceSelector).
-    Le mot de passe chiffré n'est JAMAIS renvoyé pour des raisons de sécurité.
-    """
+    """Le mot de passe (même chiffré) n'est jamais renvoyé."""
     id: str
+    category: str
     is_active: bool
-    is_archived: bool = False          # Soft Delete — False par défaut pour compatibilité
+    is_archived: bool = False
     last_sync_status: str
-    last_sync_at: Optional[datetime] = None   # Horodatage du dernier cycle Celery réussi
+    last_sync_at: Optional[datetime] = None
+    last_sync_error: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
 
 
-class SystemSettingBase(BaseModel):
+class SystemSettingResponse(BaseModel):
     key: str
     value: str
     description: Optional[str] = None
     category: str = "GENERAL"
 
-class SystemSettingResponse(SystemSettingBase):
     model_config = ConfigDict(from_attributes=True)
 
-class SystemSettingUpdate(BaseModel):
-    value: str
 
+class SystemSettingUpdate(BaseModel):
+    value: str = Field(max_length=1024)

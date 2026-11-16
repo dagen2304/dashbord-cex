@@ -15,7 +15,8 @@ class BaseCollector(ABC):
         self.device_id = device_id
         self.device_name = device_name
         self.config = config
-        self.simulate = config.get("simulate", True)
+        # Plus aucun mode simulation dans le code de production (les simulateurs vivent dans tests/).
+        self.simulate = False
 
     @abstractmethod
     def collect(self) -> Dict[str, Any]:

@@ -1,45 +1,39 @@
 /** @type {import('tailwindcss').Config} */
+const token = (name) => `rgb(var(--${name}) / <alpha-value>)`
+
 export default {
-  darkMode: 'class',
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
+  darkMode: ['class', '[data-theme="dark"]'],
+  content: ['./index.html', './src/**/*.{ts,tsx}'],
+  safelist: ['text-ok', 'text-warn', 'text-crit', 'text-nodata'],
   theme: {
     extend: {
       colors: {
-        orange: {
-          brand: '#FF7900',
-          accessible: '#F16E00',
-          blue: '#4BB4E6',
-          'blue-dark': '#085EBD',
-          green: '#50BE87',
-          'green-dark': '#0A6E31',
-          pink: '#FFB4E6',
-          'pink-dark': '#FF8AD4',
-          purple: '#A885D8',
-          'purple-dark': '#492191',
-          yellow: '#FFD200',
-          'yellow-dark': '#FFB400',
-        },
-        // Semantic Theme colors for light/dark mode
-        theme: {
-          base: 'rgb(var(--bg-base) / <alpha-value>)',
-          surface: 'rgb(var(--bg-surface) / <alpha-value>)',
-          popover: 'rgb(var(--bg-popover) / <alpha-value>)',
-          border: 'rgb(var(--border-color) / <alpha-value>)',
-          text: 'rgb(var(--text-base) / <alpha-value>)',
-          muted: 'rgb(var(--text-muted) / <alpha-value>)',
-          accent: 'rgb(var(--accent-color) / <alpha-value>)',
-        }
+        bg: token('bg'),
+        surface: token('surface'),
+        'surface-2': token('surface-2'),
+        border: token('border'),
+        fg: token('fg'),
+        'fg-2': token('fg-2'),
+        muted: token('muted'),
+        accent: token('accent'),
+        'on-accent': token('on-accent'),
+        ring: token('ring'),
+        ok: token('ok'),
+        warn: token('warn'),
+        crit: token('crit'),
+        nodata: token('nodata'),
+        'series-1': token('series-1'),
+        'series-2': token('series-2'),
       },
       fontFamily: {
-        sans: ['"Helvetica Neue"', 'Helvetica', 'Arial', 'sans-serif'],
-        mono: ['"JetBrains Mono"', 'monospace'],
-      }
+        sans: ['"Fira Sans"', 'system-ui', 'sans-serif'],
+        mono: ['"Fira Code"', 'ui-monospace', 'monospace'],
+      },
+      fontSize: {
+        '2xs': ['0.75rem', { lineHeight: '1rem' }],
+      },
+      transitionDuration: { DEFAULT: '180ms' },
     },
   },
   plugins: [],
 }
-
-
