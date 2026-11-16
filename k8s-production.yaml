@@ -1,0 +1,404 @@
+---
+# ==============================================================================
+# NAMESPACE & CONFIGURATION
+# ==============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: noc
+---
+# ------------------------------------------------------------------------------
+# SECRET noc-secrets — NE PAS le déclarer dans ce fichier.
+# Il est créé hors dépôt (ou via ExternalSecrets / Vault) AVANT d'appliquer ce manifeste :
+#
+#   kubectl -n noc create secret generic noc-secrets \
+#     --from-literal=POSTGRES_PASSWORD='...' \
+#     --from-literal=DOCKER_INFLUXDB_INIT_PASSWORD='...' \
+#     --from-literal=INFLUXDB_TOKEN='...' \
+#     --from-literal=DOCKER_INFLUXDB_INIT_ADMIN_TOKEN='<identique à INFLUXDB_TOKEN>' \
+#     --from-literal=SECRET_KEY='...' \
+#     --from-literal=INTERNAL_API_KEY='...' \
+#     --from-literal=DATABASE_URL='postgresql://noc_admin:<POSTGRES_PASSWORD>@postgres:5432/noc_dashboard'
+#
+# Générer chaque valeur avec : python -c "import secrets; print(secrets.token_urlsafe(48))"
+# ------------------------------------------------------------------------------
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: noc-config
+  namespace: noc
+data:
+  # Base de données
+  POSTGRES_USER: noc_admin
+  POSTGRES_DB: noc_dashboard
+  PGDATA: /var/lib/postgresql/data/pgdata
+  REDIS_URL: redis://redis:6379/0
+  
+  # InfluxDB
+  DOCKER_INFLUXDB_INIT_MODE: setup
+  DOCKER_INFLUXDB_INIT_USERNAME: noc_operator
+  DOCKER_INFLUXDB_INIT_ORG: noc_org
+  DOCKER_INFLUXDB_INIT_BUCKET: noc_metrics
+  DOCKER_INFLUXDB_INIT_RETENTION: 30d
+  INFLUXDB_URL: http://influxdb:8086
+  INFLUXDB_ORG: noc_org
+  INFLUXDB_BUCKET: noc_metrics
+  
+  # Frontend - IMPORTANT : Remplacez par l'URL publique de votre Backend
+  # Ex: http://192.168.1.10:30000 ou https://api.mon-noc.com
+  VITE_API_URL: ""
+  FRONTEND_URL: "http://cex-dashboard.adcm.orangecm"
+# ==============================================================================
+# PERSISTENT VOLUMES (Stockage des données)
+# ==============================================================================
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: noc
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 10Gi
+  storageClassName: rook-ceph-block
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: influxdb-pvc
+  namespace: noc
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 20Gi
+  storageClassName: rook-ceph-block
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: redis-pvc
+  namespace: noc
+spec:
+  accessModes: [ "ReadWriteOnce" ]
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: rook-ceph-block
+
+
+# ==============================================================================
+# BASES DE DONNÉES (Deployments & Services)
+# ==============================================================================
+---
+# Postgres
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: noc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:15-alpine
+          ports:
+            - containerPort: 5432
+          envFrom:
+            - configMapRef:
+                name: noc-config
+            - secretRef:
+                name: noc-secrets
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: noc
+spec:
+  ports:
+    - port: 5432
+  selector:
+    app: postgres
+
+---
+# InfluxDB
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: noc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        app: influxdb
+    spec:
+      containers:
+        - name: influxdb
+          image: influxdb:2.7-alpine
+          ports:
+            - containerPort: 8086
+          envFrom:
+            - configMapRef:
+                name: noc-config
+            - secretRef:
+                name: noc-secrets
+          volumeMounts:
+            - name: influxdb-data
+              mountPath: /var/lib/influxdb2
+      volumes:
+        - name: influxdb-data
+          persistentVolumeClaim:
+            claimName: influxdb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb
+  namespace: noc
+spec:
+  ports:
+    - port: 8086
+  selector:
+    app: influxdb
+
+---
+# Redis
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: noc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+    spec:
+      containers:
+        - name: redis
+          image: redis:7-alpine
+          ports:
+            - containerPort: 6379
+          volumeMounts:
+            - name: redis-data
+              mountPath: /data
+      volumes:
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: redis-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis
+  namespace: noc
+spec:
+  ports:
+    - port: 6379
+  selector:
+    app: redis
+
+# ==============================================================================
+# APPLICATION (Backend, Celery, Frontend)
+# ==============================================================================
+---
+# Backend FastAPI
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: noc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: dagen/v2-dashboard-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - configMapRef:
+                name: noc-config
+            - secretRef:
+                name: noc-secrets
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: noc
+spec:
+  ports:
+    - port: 8000
+      targetPort: 8000
+  selector:
+    app: backend
+
+---
+# Celery Worker
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: noc
+spec:
+  replicas: 2 # Vous pouvez scaler les workers selon vos besoins
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      containers:
+        - name: celery-worker
+          image: dagen/v2-dashboard-backend:latest
+          imagePullPolicy: Always
+          command: ["celery", "-A", "app.tasks.celery_app", "worker", "--loglevel=info", "--concurrency=4"]
+          envFrom:
+            - configMapRef:
+                name: noc-config
+            - secretRef:
+                name: noc-secrets
+
+---
+# Celery Beat
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  namespace: noc
+spec:
+  replicas: 1 # Ne JAMAIS mettre plus d'un replica pour Celery Beat !
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      containers:
+        - name: celery-beat
+          image: dagen/v2-dashboard-backend:latest
+          imagePullPolicy: Always
+          command: ["celery", "-A", "app.tasks.celery_app", "beat", "--loglevel=info"]
+          envFrom:
+            - configMapRef:
+                name: noc-config
+            - secretRef:
+                name: noc-secrets
+
+---
+# Frontend React
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: noc
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: dagen/v2-dashboard-frontend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          envFrom:
+            - configMapRef:
+                name: noc-config
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: noc
+spec:
+  ports:
+    - port: 80
+      targetPort: 80
+  selector:
+    app: frontend
+
+# ==============================================================================
+# INGRESS (Routage HTTP basé sur le nom de domaine)
+# ==============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: noc-ingress
+  namespace: noc
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: cex-dashboard.adcm.orangecm
+      http:
+        paths:
+          # Les requêtes vers l'API sont redirigées vers le backend (qui gère nativement /api)
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  number: 8000
+          # Le reste du trafic est dirigé vers le frontend
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80

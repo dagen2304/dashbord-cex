@@ -1,0 +1,56 @@
+# =============================================================================
+# docker-compose.dev.yml — Surcharges pour le développement local
+# Usage :  docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# =============================================================================
+
+services:
+  # Exposer les ports des services internes pour debug
+  db:
+    ports:
+      - "5432:5432"
+
+  influxdb:
+    ports:
+      - "8086:8086"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  # Backend : hot-reload + volume monté
+  backend:
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./backend:/app
+
+  # Celery Worker : volume monté pour hot-reload du code
+  celery_worker:
+    volumes:
+      - ./backend:/app
+
+  # Celery Beat : volume monté
+  celery_beat:
+    volumes:
+      - ./backend:/app
+
+  # Frontend : serveur Vite dev avec hot-reload
+  # On remplace entièrement le service frontend pour le dev
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    ports:
+      !override
+        - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=${VITE_API_URL:-http://localhost:8000}
+    # Désactiver le healthcheck Nginx (Vite dev n'écoute pas sur 80)
+    healthcheck:
+      disable: true
+    deploy:
+      resources:
+        limits:
+          memory: 512M

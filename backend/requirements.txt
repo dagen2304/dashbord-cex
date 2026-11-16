@@ -1,0 +1,31 @@
+# Web Framework & Server
+fastapi>=0.100.0
+uvicorn[standard]>=0.22.0
+pydantic[email]>=2.0
+pydantic-settings>=2.0
+python-multipart>=0.0.6
+
+# Database & Time-Series
+SQLAlchemy>=2.0.0
+psycopg2-binary>=2.9.6
+influxdb-client>=1.36.0
+
+# Async Tasks Queue
+celery>=5.3.1
+redis>=4.6.0
+
+# Security & Authentication
+passlib[bcrypt]>=1.7.4
+bcrypt>=4.0.1
+PyJWT>=2.7.0
+python-jose[cryptography]>=3.3.0
+
+# Data Analysis & Connectors
+pandas>=2.0.0
+requests>=2.31.0
+urllib3>=2.0.0
+pyvmomi>=8.0.1.0  # SDK officiel vSphere / vCenter
+paramiko>=3.2.0   # Connexion SSH pour CLI (Veritas Access/NetBackup)
+cryptography>=41.0.0
+openpyxl>=3.1.0
+pysnmp>=6.1.1     # SNMP fallback pour DataDomain & équipements réseau
