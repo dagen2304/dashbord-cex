@@ -15,7 +15,7 @@ from app.demo import DEMO_SUFFIX
 from app.models.application import VM, Application
 from app.models.inventory import InfrastructureDevice, LatencyAnomaly, MetricHistory, ServiceDiscovery
 from app.tasks.celery_app import celery_app
-from app.tasks.scheduler import _store_capacity_history, _store_timeseries, _sync_vm_inventory
+from app.tasks.scheduler import _check_latency, _store_capacity_history, _store_timeseries, _sync_vm_inventory
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +85,17 @@ def _vcenter_payload(name: str, host: str, prod: bool, t: float) -> Dict[str, An
         "ram_usage_pct": round(70 + 18 * abs(_wave(t, 300, n)), 1) if prod else round(45 + 8 * abs(_wave(t, 300, n)), 1),
     } for n in range(1, n_hosts + 1)]
     ds_usage = [91.2, 84.5, 72.0, 65.3, 58.9, 41.0] if prod else [61.0, 48.2, 39.5]
-    datastores = [{
-        "datastore_name": f"DS-{'PROD' if prod else 'PRA'}-{n:02d}", "capacity_tb": 20.0,
-        "used_tb": round(20 * u / 100, 2), "usage_pct": u,
-    } for n, u in enumerate(ds_usage, 1)]
+    datastores = []
+    for n, u in enumerate(ds_usage, 1):
+        # DS-PROD-02 : pics de latence périodiques au-dessus du seuil (20 ms par défaut).
+        spike = prod and n == 2 and _wave(t, 180) > 0.5
+        read = round(24 + 6 * abs(_wave(t, 11)), 2) if spike else round(1.5 + 2.5 * abs(_wave(t, 45, n)), 2)
+        write = round(read * 0.7, 2)
+        datastores.append({
+            "datastore_name": f"DS-{'PROD' if prod else 'PRA'}-{n:02d}", "capacity_tb": 20.0,
+            "used_tb": round(20 * u / 100, 2), "usage_pct": u,
+            "read_latency_ms": read, "write_latency_ms": write, "latency_ms": max(read, write),
+        })
     filesystems = []
     for vm in vms[:20]:
         for mount, cap, used in (("/", 50.0, 20 + vm["index"] * 1.4), ("/var/lib/data", 500.0, 300 + vm["index"] * 9)):
@@ -114,6 +121,7 @@ def _vcenter_payload(name: str, host: str, prod: bool, t: float) -> Dict[str, An
             "hosts_total": n_hosts, "hosts_online": n_hosts - (1 if prod else 0), "hosts_maintenance": 1 if prod else 0,
             "datastores_total_tb": total_tb, "datastores_used_tb": used_tb,
             "datastores_usage_pct": round(used_tb / total_tb * 100, 1),
+            "latency_ms": max(d["latency_ms"] for d in datastores),
         },
         "alerts": alerts,
         "hosts_metrics": hosts,
@@ -222,8 +230,12 @@ def _seed(db) -> None:
                     vp.field(f, float(vm[f]))
                 points.append(vp)
             for ds in p.get("datastores_metrics", []):
-                points.append(Point("ds_telemetry").tag("device_id", dev.id).tag("datastore_name", ds["datastore_name"])
-                              .field("usage_pct", float(ds["usage_pct"])).time(ts, WritePrecision.S))
+                dp = (Point("ds_telemetry").tag("device_id", dev.id).tag("datastore_name", ds["datastore_name"])
+                      .field("usage_pct", float(ds["usage_pct"])).time(ts, WritePrecision.S))
+                for f in ("read_latency_ms", "write_latency_ms"):
+                    if f in ds:
+                        dp.field(f, float(ds[f]))
+                points.append(dp)
     influx = get_influx()
     for i in range(0, len(points), 5000):
         influx.write_api.write(bucket=INFLUXDB_BUCKET, org=INFLUXDB_ORG, record=points[i:i + 5000])
@@ -268,6 +280,7 @@ def refresh_demo_data() -> int:
         _store_timeseries(dev.id, payload)
         _sync_vm_inventory(payload)
         _store_capacity_history(dev.id, payload)
+        _check_latency(dev.id, dev.display_name, payload)  # même règle de seuil que les vraies mesures
         r_client.set(LATEST_KEY.format(device_id=dev.id), json.dumps(payload, default=str), ex=3600)
         refreshed += 1
 

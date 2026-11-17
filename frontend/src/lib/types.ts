@@ -39,7 +39,7 @@ export interface DeviceState {
   alerts: DeviceAlert[]
   sparkline?: { field: string; points: SeriesPoint[] }
   hosts_metrics?: Array<{ host_name: string; cluster: string; status: string; cpu_usage_pct: number; ram_usage_pct: number }>
-  datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number }>
+  datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number; read_latency_ms?: number; write_latency_ms?: number }>
 }
 
 export interface Device {

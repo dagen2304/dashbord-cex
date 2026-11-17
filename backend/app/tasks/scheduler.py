@@ -231,7 +231,8 @@ def _store_capacity_history(device_id: str, payload: Dict[str, Any]) -> None:
 
 
 def _check_latency(device_id: str, device_name: str, payload: Dict[str, Any]) -> None:
-    """Alerte sur latence de datastore RÉELLEMENT mesurée (champ absent = pas d'alerte)."""
+    """Alerte sur latence de datastore RÉELLEMENT mesurée (champ absent = pas d'alerte).
+    Complète `payload` (alertes, statut) avant son enregistrement dans Redis."""
     datastores = [ds for ds in payload.get("datastores_metrics") or [] if ds.get("latency_ms") is not None]
     if not datastores:
         return
@@ -245,6 +246,15 @@ def _check_latency(device_id: str, device_name: str, payload: Dict[str, Any]) ->
             latency = float(ds["latency_ms"])
             if latency <= threshold:
                 continue
+            # Alerte visible tant que la latence reste au-dessus du seuil (vue d'ensemble, centre d'alertes).
+            payload.setdefault("alerts", []).append({
+                "severity": "WARNING",
+                "component": "Datastores",
+                "message": f"Latence {ds['datastore_name']} : {latency:.1f} ms (seuil {threshold:g} ms)",
+            })
+            if payload.get("status") == "HEALTHY":
+                payload["status"] = "WARNING"
+            # Historique + e-mail : au plus une fois par heure et par datastore.
             recent = db.query(LatencyAnomaly).filter(
                 LatencyAnomaly.device_id == device_id,
                 LatencyAnomaly.target_name == ds["datastore_name"],

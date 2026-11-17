@@ -141,7 +141,7 @@ export default function DeviceDetail() {
         <Card title={`Datastores (${d.datastores_metrics.length})`} bodyClassName="p-0">
           <div className="max-h-[420px] overflow-auto">
             <table className="table-base">
-              <thead><tr><th>Datastore</th><th className="text-right">Capacité</th><th className="text-right">Utilisé</th><th className="w-56">Utilisation</th></tr></thead>
+              <thead><tr><th>Datastore</th><th className="text-right">Capacité</th><th className="text-right">Utilisé</th><th className="w-56">Utilisation</th><th className="text-right">Latence lecture</th><th className="text-right">Latence écriture</th></tr></thead>
               <tbody>
                 {[...d.datastores_metrics].sort((a, b) => b.usage_pct - a.usage_pct).map((ds) => (
                   <tr key={ds.datastore_name}>
@@ -149,6 +149,8 @@ export default function DeviceDetail() {
                     <td className="num text-right">{fmt(ds.capacity_tb, 2, 'To')}</td>
                     <td className="num text-right">{fmt(ds.used_tb, 2, 'To')}</td>
                     <td><UsageBar value={ds.usage_pct} /></td>
+                    <td className="num text-right">{fmt(ds.read_latency_ms, 1, 'ms')}</td>
+                    <td className="num text-right">{fmt(ds.write_latency_ms, 1, 'ms')}</td>
                   </tr>
                 ))}
               </tbody>

@@ -62,8 +62,23 @@ Les numéros S…, C… et I… renvoient à l'audit initial, conservé dans l'h
 | C12 | Migrations idempotentes au démarrage (`app/core/migrations.py`) pour les colonnes ajoutées aux bases existantes. |
 | — | **Pilote PostgreSQL : `psycopg` v3.** SQLAlchemy 2.1 l'utilise par défaut pour les URL `postgresql://` ; avec `psycopg2`, le backend ne démarrait pas. |
 | I14 | Image Python 3.12 construite en deux étapes, sans outils de compilation dans l'image finale. Dépendances figées à la version exacte. |
-| C14 | **31 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
+| C14 | **43 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
 | I17 | Fichiers parasites supprimés : scripts ponctuels, `celery.log`, `celerybeat-schedule`, `graphify-out/`. |
+
+### Latences disque réelles (vCenter)
+
+La latence était tirée au hasard dans la v2. Elle est maintenant **mesurée** via le `PerformanceManager` de vSphere (`app/services/vsphere_perf.py`) :
+
+| Objet | Compteurs (ms) | Agrégation |
+|---|---|---|
+| Datastore | `datastore.totalReadLatency.average`, `datastore.totalWriteLatency.average`, relevés sur chaque hôte ESXi | moyenne de la dernière minute (3 échantillons temps réel de 20 s), puis **maximum** entre les hôtes |
+| VM | `virtualDisk.totalReadLatency.average`, `virtualDisk.totalWriteLatency.average`, par disque virtuel | moyenne de la dernière minute, puis **disque le plus lent** |
+
+- **Où ça apparaît.** Dans le tableau des datastores du détail vCenter, dans l'onglet « Latence disque » des VMs et dans l'explorateur de métriques. La métrique `latency_ms` du vCenter vaut la pire latence de ses datastores.
+- **Alertes.** Un datastore au-dessus du seuil (Paramètres → `latency_threshold_ms`) passe le vCenter en « Attention » et apparaît dans les alertes en cours tant que le dépassement dure. Il est historisé, avec un e-mail au plus une fois par heure et par datastore.
+- **Aucune valeur inventée.** Une VM éteinte, un compteur absent ou un échantillon `-1` laissent le champ vide. Si le `PerformanceManager` échoue, le reste de la collecte est conservé et une alerte « Info » le signale.
+- **Prérequis côté vCenter.** Aucun réglage n'est nécessaire. Le compte de service en lecture seule suffit, et les compteurs temps réel sont fournis par les hôtes quel que soit le niveau de statistiques de vCenter. Les requêtes sont regroupées par lots de 50 objets, pour rester sous la limite `config.vpxd.stats.maxQueryMetrics`.
+- **Vérification.** Tests unitaires avec un faux `PerformanceManager` (résolution des compteurs, agrégation, valeurs manquantes, lots, panne, alertes). **Pas encore vérifié contre un vrai vCenter** : à contrôler lors de la recette sur le réseau Orange.
 
 ### Interface (réécrite de zéro)
 
@@ -118,12 +133,11 @@ Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) 
 
 Par ordre de priorité :
 
-1. **Latence réelle des datastores et des VMs** (vCenter `PerformanceManager`, compteurs `datastore.totalReadLatency.average` et `virtualDisk.*Latency`). Tant que ce n'est pas fait, aucune alerte de latence ne se déclenche, puisque la valeur aléatoire a été supprimée.
-2. **Vérification TLS des équipements** (S10) : autorité de certification interne ou certificat épinglé par équipement, et fichier `known_hosts` pour SSH (Veritas). Aujourd'hui, `verify=False` est toujours utilisé dans les collecteurs.
-3. **Connexion par l'annuaire d'entreprise** (LDAP/AD ou SSO OIDC) pour remplacer les comptes locaux, en gardant les rôles.
-4. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
-5. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
-6. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
-7. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
-8. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
-9. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
+1. **Vérification TLS des équipements** (S10) : autorité de certification interne ou certificat épinglé par équipement, et fichier `known_hosts` pour SSH (Veritas). Aujourd'hui, `verify=False` est toujours utilisé dans les collecteurs.
+2. **Connexion par l'annuaire d'entreprise** (LDAP/AD ou SSO OIDC) pour remplacer les comptes locaux, en gardant les rôles.
+3. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
+4. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
+5. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
+6. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
+7. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
+8. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
