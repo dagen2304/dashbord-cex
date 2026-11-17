@@ -20,6 +20,9 @@ class User(Base):
     is_active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     last_login_at = Column(DateTime, nullable=True)
+    # « local » : mot de passe géré ici. « ldap » : compte Active Directory, mot de passe vérifié
+    # par l'AD à chaque connexion (jamais stocké) et rôle synchronisé depuis ses groupes AD.
+    auth_source = Column(String(16), nullable=False, default="local")
     # Incrémenté à chaque changement de mot de passe ou désactivation : invalide les jetons émis avant.
     token_version = Column(Integer, nullable=False, default=0)
 

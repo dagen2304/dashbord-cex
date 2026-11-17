@@ -13,8 +13,9 @@ from app.core.security import (
     require_admin, validate_password_strength, verify_password,
 )
 from app.models.user import AuditEvent, User
+from app.core import ldap_auth
 from app.schemas.auth import (
-    AuditEventOut, LoginRequest, PasswordChange, TokenResponse, UserCreate, UserOut, UserUpdate,
+    AuditEventOut, AuthConfig, LoginRequest, PasswordChange, TokenResponse, UserCreate, UserOut, UserUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,60 @@ def _register_failure(key: str) -> None:
         pass
 
 
+def _login_failed(db: Session, key: str, username: str, ip: str, action: str = "auth.login_failed",
+                  status_code: int = status.HTTP_401_UNAUTHORIZED,
+                  detail: str = "Identifiant ou mot de passe incorrect.") -> HTTPException:
+    _register_failure(key)
+    audit(db, username[:64], action, details={"ip": ip})
+    db.commit()
+    return HTTPException(status_code=status_code, detail=detail)
+
+
+def _ldap_login(db: Session, payload: LoginRequest, key: str, ip: str) -> User:
+    """Connexion par l'Active Directory ; crée ou met à jour le compte « ldap » correspondant."""
+    try:
+        identity = ldap_auth.authenticate(payload.username, payload.password)
+    except ldap_auth.LdapDenied:
+        raise _login_failed(db, key, payload.username, ip, "auth.ldap_denied", status.HTTP_403_FORBIDDEN,
+                            "Votre compte AD n'appartient à aucun groupe autorisé pour ce dashboard.")
+    except ldap_auth.LdapUnavailable as exc:
+        logger.error("Annuaire AD indisponible : %s", exc)
+        audit(db, payload.username[:64], "auth.ldap_unavailable", details={"ip": ip, "error": str(exc)[:200]})
+        db.commit()
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                            detail="Annuaire AD indisponible. Réessayez, ou utilisez un compte local de secours.")
+    if identity is None:
+        raise _login_failed(db, key, payload.username, ip)
+
+    username = identity.username.lower()
+    user = db.query(User).filter(User.username == username).first()
+    if user is None:
+        # Valeurs explicites : les « default » de colonne ne s'appliquent qu'à l'insertion en base.
+        user = User(username=username, auth_source="ldap", password_hash="!ldap", role=identity.role,
+                    full_name=identity.full_name, is_active=True, token_version=0)
+        db.add(user)
+        audit(db, "system", "user.ldap_provisioned", username, {"role": identity.role})
+    elif user.auth_source != "ldap":
+        # Un compte local du même nom existe : il prime (et son mot de passe a déjà été refusé).
+        raise _login_failed(db, key, payload.username, ip)
+    if not user.is_active:
+        raise _login_failed(db, key, payload.username, ip, detail="Compte désactivé dans le dashboard.")
+    if user.role != identity.role:
+        audit(db, "system", "user.ldap_role_synced", username, {"old": user.role, "new": identity.role})
+        user.role = identity.role
+        user.token_version += 1
+    if identity.full_name:
+        user.full_name = identity.full_name
+    db.flush()
+    return user
+
+
+@router.get("/config", response_model=AuthConfig)
+def auth_config():
+    """Public : indique à l'écran de connexion si les comptes AD sont acceptés."""
+    return AuthConfig(ldap_enabled=settings.ldap_enabled, ldap_domain_label=settings.ldap_domain_label or None)
+
+
 @router.post("/login", response_model=TokenResponse)
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
@@ -57,20 +112,23 @@ def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)
             detail=f"Trop de tentatives. Réessayez dans {settings.login_lock_minutes} minutes.",
         )
 
-    user = db.query(User).filter(User.username == payload.username).first()
-    valid = verify_password(payload.password, user.password_hash if user else _DUMMY_HASH)
-    if not user or not valid or not user.is_active:
-        _register_failure(key)
-        audit(db, payload.username[:64], "auth.login_failed", details={"ip": ip})
-        db.commit()
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Identifiant ou mot de passe incorrect.")
+    # 1. Compte local (dont le compte administrateur de secours) : prioritaire s'il existe.
+    local = db.query(User).filter(User.username == payload.username, User.auth_source == "local").first()
+    if local is not None or not settings.ldap_enabled:
+        valid = verify_password(payload.password, local.password_hash if local else _DUMMY_HASH)
+        if not local or not valid or not local.is_active:
+            raise _login_failed(db, key, payload.username, ip)
+        user = local
+    else:
+        # 2. Active Directory.
+        user = _ldap_login(db, payload, key, ip)
 
     try:
         r_client.delete(key)
     except Exception:
         pass
     user.last_login_at = datetime.utcnow()
-    audit(db, user, "auth.login", details={"ip": ip})
+    audit(db, user, "auth.login", details={"ip": ip, "source": user.auth_source})
     db.commit()
     db.refresh(user)
     token, expires_in = create_access_token(user)
@@ -84,6 +142,8 @@ def me(user: User = Depends(get_current_user)):
 
 @router.post("/me/password", status_code=status.HTTP_204_NO_CONTENT)
 def change_my_password(payload: PasswordChange, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user.auth_source == "ldap":
+        raise HTTPException(status_code=400, detail="Compte Active Directory : changez votre mot de passe Windows.")
     if not verify_password(payload.current_password, user.password_hash):
         raise HTTPException(status_code=400, detail="Mot de passe actuel incorrect.")
     validate_password_strength(payload.new_password)
@@ -123,6 +183,9 @@ def update_user(user_id: int, payload: UserUpdate, admin: User = Depends(require
     if not user:
         raise HTTPException(status_code=404, detail="Utilisateur introuvable.")
     changes = payload.model_dump(exclude_unset=True)
+    if user.auth_source == "ldap" and ({"password", "role", "full_name"} & {k for k, v in changes.items() if v is not None}):
+        raise HTTPException(status_code=400,
+                            detail="Compte Active Directory : le mot de passe, le nom et le rôle viennent de l'AD (groupes). Seule l'activation se règle ici.")
 
     # Ne jamais laisser la plateforme sans administrateur actif.
     demoting = ("role" in changes and changes["role"] != "admin") or changes.get("is_active") is False

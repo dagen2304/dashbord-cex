@@ -31,9 +31,15 @@ export default function Account() {
             <dt className="text-muted">Identifiant</dt><dd className="font-mono">{user?.username}</dd>
             <dt className="text-muted">Nom</dt><dd>{user?.full_name ?? '—'}</dd>
             <dt className="text-muted">Rôle</dt><dd>{user ? ROLE_LABEL[user.role] : ''}</dd>
+            <dt className="text-muted">Compte</dt><dd>{user?.auth_source === 'ldap' ? 'Active Directory' : 'Local'}</dd>
             <dt className="text-muted">Connexion</dt><dd>{dateTime(user?.last_login_at)}</dd>
           </dl>
         </Card>
+        {user?.auth_source === 'ldap' ? (
+          <Card title="Mot de passe">
+            <p className="text-sm text-fg-2">Votre compte est géré par l’Active Directory : changez votre mot de passe Windows. Votre rôle dépend de vos groupes AD et est mis à jour à chaque connexion.</p>
+          </Card>
+        ) : (
         <Card title="Changer mon mot de passe">
           <form onSubmit={submit} className="flex flex-col gap-3">
             <Field label="Mot de passe actuel" htmlFor="p-cur"><Input id="p-cur" type="password" autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} /></Field>
@@ -48,6 +54,7 @@ export default function Account() {
             <p className="text-2xs text-muted">Vos autres sessions seront déconnectées.</p>
           </form>
         </Card>
+        )}
       </div>
     </>
   )

@@ -53,6 +53,21 @@ class Settings(BaseSettings):
     # Web
     cors_origins: str = ""  # liste séparée par des virgules ; vide = même origine uniquement
 
+    # Authentification Active Directory (LDAP). Désactivée par défaut.
+    ldap_enabled: bool = False
+    ldap_url: str = ""                    # ex. ldaps://dc01.adcm.orangecm:636 (plusieurs URL séparées par des virgules)
+    ldap_start_tls: bool = False          # pour ldap://… : chiffrer avec StartTLS
+    ldap_ca_file: str = ""                # AC qui a signé le certificat des contrôleurs de domaine
+    ldap_base_dn: str = ""                # ex. DC=adcm,DC=orangecm
+    ldap_bind_dn: str = ""                # compte de service (lecture seule) pour rechercher les utilisateurs
+    ldap_bind_password: str = ""
+    ldap_user_filter: str = "(&(objectCategory=person)(objectClass=user)(sAMAccountName={username}))"
+    ldap_group_admin: str = ""            # DN des groupes AD donnant chaque rôle
+    ldap_group_operator: str = ""
+    ldap_group_viewer: str = ""
+    ldap_timeout_s: int = 5
+    ldap_domain_label: str = ""           # affiché sur l'écran de connexion, ex. « ADCM »
+
     # Mode démonstration (app/demo) : équipements fictifs *.demo.invalid. Jamais en production.
     demo_data: bool = False
 
@@ -73,6 +88,28 @@ class Settings(BaseSettings):
         if v == info.data.get("secret_key"):
             raise ValueError("JWT_SECRET doit être différent de SECRET_KEY")
         return v
+
+    @field_validator("ldap_url")
+    @classmethod
+    def _ldap_url(cls, v: str) -> str:
+        for url in [u.strip() for u in v.split(",") if u.strip()]:
+            if not url.startswith(("ldaps://", "ldap://")):
+                raise ValueError("LDAP_URL doit commencer par ldaps:// ou ldap://")
+        return v
+
+    def ldap_problem(self) -> str | None:
+        """Raison pour laquelle la configuration LDAP est inutilisable (None si elle est valide)."""
+        if not self.ldap_enabled:
+            return None
+        urls = [u.strip() for u in self.ldap_url.split(",") if u.strip()]
+        if not urls or not self.ldap_base_dn:
+            return "LDAP_URL et LDAP_BASE_DN sont obligatoires."
+        if any(u.startswith("ldap://") for u in urls) and not self.ldap_start_tls:
+            # Un bind simple en clair exposerait les mots de passe Windows sur le réseau.
+            return "Connexion LDAP non chiffrée refusée : utilisez ldaps:// ou LDAP_START_TLS=true."
+        if not (self.ldap_group_admin or self.ldap_group_operator or self.ldap_group_viewer):
+            return "Aucun groupe AD n'est associé à un rôle (LDAP_GROUP_ADMIN/OPERATOR/VIEWER)."
+        return None
 
     @property
     def cors_origin_list(self) -> List[str]:

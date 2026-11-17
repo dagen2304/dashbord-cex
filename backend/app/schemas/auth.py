@@ -17,6 +17,7 @@ class UserOut(BaseModel):
     full_name: Optional[str] = None
     role: Role
     is_active: bool
+    auth_source: Literal["local", "ldap"] = "local"
     created_at: datetime
     last_login_at: Optional[datetime] = None
 
@@ -58,3 +59,9 @@ class AuditEventOut(BaseModel):
     details: Optional[str] = None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class AuthConfig(BaseModel):
+    """Informations publiques affichées sur l'écran de connexion."""
+    ldap_enabled: bool
+    ldap_domain_label: Optional[str] = None

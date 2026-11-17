@@ -1,6 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import { Navigate, useLocation } from 'react-router-dom'
 import { LogIn } from 'lucide-react'
+import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { Button, Field, InlineError, Input } from '@/components/ui'
 
@@ -11,6 +12,11 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [domain, setDomain] = useState<{ ldap_enabled: boolean; ldap_domain_label: string | null } | null>(null)
+
+  useEffect(() => {
+    api.get<{ ldap_enabled: boolean; ldap_domain_label: string | null }>('/auth/config').then(setDomain).catch(() => setDomain(null))
+  }, [])
 
   if (user) {
     const from = (location.state as { from?: string } | null)?.from ?? '/'
@@ -40,7 +46,8 @@ export default function Login() {
           <p className="mt-1 text-sm text-muted">Supervision de l’infrastructure — virtualisation, stockage, sauvegarde</p>
         </div>
         <form onSubmit={submit} className="card flex flex-col gap-4 p-6" noValidate>
-          <Field label="Identifiant" htmlFor="username">
+          <Field label="Identifiant" htmlFor="username"
+            hint={domain?.ldap_enabled ? `Votre compte Windows${domain.ldap_domain_label ? ` ${domain.ldap_domain_label}` : ''} (sans le domaine), ou un compte local.` : undefined}>
             <Input id="username" name="username" autoComplete="username" autoFocus required value={username}
               onChange={(e) => setUsername(e.target.value)} />
           </Field>

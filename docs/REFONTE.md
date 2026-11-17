@@ -62,7 +62,7 @@ Les numéros S…, C… et I… renvoient à l'audit initial, conservé dans l'h
 | C12 | Migrations idempotentes au démarrage (`app/core/migrations.py`) pour les colonnes ajoutées aux bases existantes. |
 | — | **Pilote PostgreSQL : `psycopg` v3.** SQLAlchemy 2.1 l'utilise par défaut pour les URL `postgresql://` ; avec `psycopg2`, le backend ne démarrait pas. |
 | I14 | Image Python 3.12 construite en deux étapes, sans outils de compilation dans l'image finale. Dépendances figées à la version exacte. |
-| C14 | **55 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
+| C14 | **66 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
 | I17 | Fichiers parasites supprimés : scripts ponctuels, `celery.log`, `celerybeat-schedule`, `graphify-out/`. |
 
 ### Latences disque réelles (vCenter)
@@ -97,6 +97,28 @@ Dans la v2, tous les collecteurs se connectaient sans vérifier le certificat (`
 - **Restes.** La détection automatique (sonde sans identifiant) ne vérifie pas le certificat. Les collecteurs n'utilisent plus de proxy système implicite (`trust_env=False`).
 - **Correctif au passage.** Le port proposé pour Veritas Access est 22 (SSH), et non plus 14161.
 - **Tests.** Serveur HTTPS local avec certificat auto-signé : refus en mode AC, acceptation avec l'AC interne, empreinte correcte ou incorrecte, lecture du certificat, clés SSH, règles de l'API.
+
+### Connexion Active Directory
+
+Les opérateurs se connectent avec leur **compte Windows** (`app/core/ldap_auth.py`). La fonction est **désactivée par défaut** (`LDAP_ENABLED=false`).
+
+1. **Recherche.** Un compte de service en lecture seule (`LDAP_BIND_DN`) recherche l'utilisateur par son `sAMAccountName`. L'identifiant est échappé contre l'injection LDAP ; un DN, un UPN ou un caractère spécial sont refusés.
+2. **Mot de passe.** Il est vérifié par un **bind LDAP au nom de l'utilisateur** et n'est **jamais stocké** (`password_hash = "!ldap"`). Un mot de passe vide est refusé avant tout appel à l'annuaire, car l'AD accepterait un « bind anonyme ».
+3. **Rôle.** Il est déduit des groupes configurés (`LDAP_GROUP_ADMIN`, `LDAP_GROUP_OPERATOR`, `LDAP_GROUP_VIEWER`), **groupes imbriqués compris** grâce à la règle AD `LDAP_MATCHING_RULE_IN_CHAIN`. Si l'utilisateur est dans plusieurs groupes, c'est le rôle le plus élevé qui s'applique. Un utilisateur qui n'est dans aucun de ces groupes est **refusé** (403).
+4. **Synchronisation.** Le compte « AD » est créé à la première connexion, puis rôle et nom sont **resynchronisés à chaque connexion**. Un changement de rôle invalide les sessions existantes.
+5. **Ce qui reste géré dans le dashboard.** Un administrateur peut désactiver un compte AD. En revanche, son mot de passe, son nom et son rôle ne se modifient que dans l'AD.
+6. **Comptes locaux.** Ils restent prioritaires à nom égal. Le compte `admin` local sert de **secours** si l'annuaire est indisponible (réponse 503 explicite dans ce cas).
+7. **Chiffrement.** `ldaps://` ou `LDAP_START_TLS=true` est obligatoire, et le certificat des contrôleurs de domaine est vérifié (`LDAP_CA_FILE` pour une AC interne). Plusieurs contrôleurs peuvent être déclarés, avec bascule automatique.
+8. **Traçabilité.** Le journal d'audit enregistre la création de comptes AD, les synchronisations de rôle, les refus faute de groupe et les indisponibilités de l'annuaire. Le verrouillage après 5 échecs s'applique aussi aux comptes AD.
+
+**À préparer côté AD :**
+- un compte de service en lecture seule ;
+- trois groupes, par exemple `NOC-Dashboard-Admins`, `NOC-Dashboard-Operateurs` et `NOC-Dashboard-Lecteurs` ;
+- l'AC des contrôleurs de domaine (fichier PEM).
+
+Les variables à renseigner sont dans `.env.example`.
+
+**Vérification.** 11 tests sur un annuaire simulé en mémoire (`ldap3` MOCK_SYNC) couvrent la création du compte, le choix du rôle, les mauvais mots de passe, l'utilisateur sans groupe, le mot de passe vide, l'injection, la priorité du compte local, la resynchronisation, les restrictions et le refus d'une connexion non chiffrée. **Ces tests ne sont pas faits contre le vrai AD**, et la résolution des groupes imbriqués n'est testable qu'avec lui.
 
 ### Interface (réécrite de zéro)
 
@@ -152,10 +174,9 @@ Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) 
 
 Par ordre de priorité :
 
-1. **Connexion par l'annuaire d'entreprise** (LDAP/AD ou SSO OIDC) pour remplacer les comptes locaux, en gardant les rôles.
-2. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
-3. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
-4. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
-5. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
-6. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
-7. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
+1. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
+2. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
+3. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
+4. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
+5. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
+6. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.

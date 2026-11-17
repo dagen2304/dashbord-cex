@@ -17,6 +17,18 @@ x-backend-env: &backend-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   CORS_ORIGINS: ${CORS_ORIGINS:-}
+  # Active Directory (désactivé par défaut) — voir .env.example
+  LDAP_ENABLED: ${LDAP_ENABLED:-false}
+  LDAP_URL: ${LDAP_URL:-}
+  LDAP_START_TLS: ${LDAP_START_TLS:-false}
+  LDAP_CA_FILE: ${LDAP_CA_FILE:-}
+  LDAP_BASE_DN: ${LDAP_BASE_DN:-}
+  LDAP_BIND_DN: ${LDAP_BIND_DN:-}
+  LDAP_BIND_PASSWORD: ${LDAP_BIND_PASSWORD:-}
+  LDAP_GROUP_ADMIN: ${LDAP_GROUP_ADMIN:-}
+  LDAP_GROUP_OPERATOR: ${LDAP_GROUP_OPERATOR:-}
+  LDAP_GROUP_VIEWER: ${LDAP_GROUP_VIEWER:-}
+  LDAP_DOMAIN_LABEL: ${LDAP_DOMAIN_LABEL:-}
   DEMO_DATA: ${DEMO_DATA:-false}
   # AC interne des équipements (fichier PEM monté dans les conteneurs), ex. /certs/ac-interne.pem
   DEVICE_CA_BUNDLE: ${DEVICE_CA_BUNDLE:-}

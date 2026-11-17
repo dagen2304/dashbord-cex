@@ -18,6 +18,7 @@ _STATEMENTS = [
     # signalé dans l'interface ; les nouveaux sont créés en « verify » par l'application.
     "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS tls_mode VARCHAR NOT NULL DEFAULT 'insecure'",
     "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS tls_fingerprint VARCHAR",
+    "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(16) NOT NULL DEFAULT 'local'",
     "CREATE INDEX IF NOT EXISTS ix_metrics_history_device_ts ON metrics_history (device_id, resource_name, timestamp)",
 ]
 

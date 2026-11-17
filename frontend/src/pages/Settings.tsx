@@ -77,8 +77,11 @@ function UserForm({ user, open, onClose }: { user: User | null; open: boolean; o
     if (!open) return
     setUsername(user?.username ?? ''); setFullName(user?.full_name ?? ''); setRole(user?.role ?? 'viewer'); setPassword(''); setActive(user?.is_active ?? true)
   }, [open, user])
+  const isAd = user?.auth_source === 'ldap'
   const save = useMutation({
-    mutationFn: () => user
+    mutationFn: () => isAd
+      ? api.put(`/auth/users/${user!.id}`, { is_active: active })
+      : user
       ? api.put(`/auth/users/${user.id}`, { full_name: fullName || null, role, is_active: active, ...(password ? { password } : {}) })
       : api.post('/auth/users', { username: username.trim(), full_name: fullName || null, role, password }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['users'] }); onClose() },
@@ -90,7 +93,13 @@ function UserForm({ user, open, onClose }: { user: User | null; open: boolean; o
         <Button variant="primary" loading={save.isPending} disabled={!user && (!username.trim() || !password)} onClick={() => save.mutate()}>Enregistrer</Button>
       </>}>
       <div className="flex flex-col gap-4">
+        {isAd ? (
+          <p className="rounded-md bg-surface-2 p-3 text-sm text-fg-2">
+            Compte Active Directory : le nom, le mot de passe et le rôle ({user ? ROLE_LABEL[user.role] : ''}) viennent de l’AD et de ses groupes, synchronisés à chaque connexion. Seule l’activation se règle ici.
+          </p>
+        ) : null}
         {!user ? <Field label="Identifiant" htmlFor="u-name"><Input id="u-name" autoComplete="off" value={username} onChange={(e) => setUsername(e.target.value)} /></Field> : null}
+        {!isAd ? <>
         <Field label="Nom complet" htmlFor="u-full"><Input id="u-full" value={fullName} onChange={(e) => setFullName(e.target.value)} /></Field>
         <Field label="Rôle" htmlFor="u-role" hint="Lecteur : consultation. Opérateur : + exports, applications, alertes. Administrateur : + équipements, paramètres, utilisateurs.">
           <Select id="u-role" value={role} onChange={(e) => setRole(e.target.value as Role)}>
@@ -100,6 +109,7 @@ function UserForm({ user, open, onClose }: { user: User | null; open: boolean; o
         <Field label={user ? 'Nouveau mot de passe' : 'Mot de passe'} htmlFor="u-pass" hint="12 caractères minimum, mélangeant au moins 3 types (minuscules, majuscules, chiffres, symboles).">
           <Input id="u-pass" type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
         </Field>
+        </> : null}
         {user ? (
           <label className="flex cursor-pointer items-center gap-2 text-sm">
             <input type="checkbox" className="size-4 accent-[rgb(var(--accent))]" checked={active} onChange={(e) => setActive(e.target.checked)} />
@@ -122,13 +132,14 @@ function UsersTab() {
       {q.isLoading ? <Spinner /> : q.isError ? <ErrorState error={q.error} onRetry={() => q.refetch()} /> : (
         <div className="overflow-x-auto">
           <table className="table-base">
-            <thead><tr><th>Utilisateur</th><th>Rôle</th><th>État</th><th>Dernière connexion</th><th className="w-12" /></tr></thead>
+            <thead><tr><th>Utilisateur</th><th>Rôle</th><th>Source</th><th>État</th><th>Dernière connexion</th><th className="w-12" /></tr></thead>
             <tbody>
               {q.data?.map((u) => (
                 <tr key={u.id}>
                   <td><span className="flex items-center gap-2"><UserRound className="size-4 text-muted" aria-hidden /><span className="font-medium">{u.username}</span>{u.id === me?.id ? <span className="text-2xs text-muted">(vous)</span> : null}</span>
                     {u.full_name ? <p className="pl-6 text-2xs text-muted">{u.full_name}</p> : null}</td>
                   <td>{ROLE_LABEL[u.role]}</td>
+                  <td className="text-2xs">{u.auth_source === 'ldap' ? 'Active Directory' : 'Local'}</td>
                   <td><StatusBadge status={u.is_active ? 'ONLINE' : 'NO_DATA'} label={u.is_active ? 'Actif' : 'Désactivé'} /></td>
                   <td className="text-2xs text-muted" title={dateTime(u.last_login_at)}>{relativeTime(u.last_login_at)}</td>
                   <td><IconButton icon={Pencil} label={`Modifier ${u.username}`} onClick={() => { setEditing(u); setOpen(true) }} /></td>
@@ -145,7 +156,7 @@ function UsersTab() {
 
 const ACTION_LABEL: Record<string, string> = {
   'auth.login': 'Connexion', 'auth.login_failed': 'Échec de connexion', 'user.created': 'Utilisateur créé', 'user.updated': 'Utilisateur modifié',
-  'user.password_changed': 'Mot de passe changé', 'user.bootstrap': 'Compte initial créé', 'device.created': 'Équipement ajouté',
+  'user.password_changed': 'Mot de passe changé', 'user.ldap_provisioned': 'Compte AD créé', 'user.ldap_role_synced': 'Rôle AD synchronisé', 'auth.ldap_denied': 'Connexion AD refusée (groupe)', 'auth.ldap_unavailable': 'Annuaire AD indisponible', 'user.bootstrap': 'Compte initial créé', 'device.created': 'Équipement ajouté',
   'device.updated': 'Équipement modifié', 'device.archived': 'Équipement archivé', 'device.reactivated': 'Équipement réactivé',
   'device.discover': 'Détection lancée', 'setting.updated': 'Paramètre modifié', 'application.created': 'Application créée',
   'application.updated': 'Application modifiée', 'application.deleted': 'Application supprimée', 'alert.resolved': 'Alerte traitée',
