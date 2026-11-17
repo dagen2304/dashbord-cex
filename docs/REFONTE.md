@@ -120,6 +120,38 @@ Les variables à renseigner sont dans `.env.example`.
 
 **Vérification.** 11 tests sur un annuaire simulé en mémoire (`ldap3` MOCK_SYNC) couvrent la création du compte, le choix du rôle, les mauvais mots de passe, l'utilisateur sans groupe, le mot de passe vide, l'injection, la priorité du compte local, la resynchronisation, les restrictions et le refus d'une connexion non chiffrée. **Ces tests ne sont pas faits contre le vrai AD**, et la résolution des groupes imbriqués n'est testable qu'avec lui.
 
+### Kubernetes durci (S6, I13)
+
+`k8s-production.yaml` a été réécrit :
+
+| Point | Avant | Après |
+|---|---|---|
+| **Sécurité des pods** | aucune contrainte, conteneurs en root | namespace en Pod Security Standards **« restricted »** (appliqué) ; tous les conteneurs **non-root**, sans élévation de privilèges, sans capacités, seccomp `RuntimeDefault`, **racine en lecture seule** (`emptyDir` pour `/tmp`), jeton de compte de service non monté |
+| **Réseau** | tout ouvert | `NetworkPolicy` **« tout interdit par défaut »**, puis flux minimaux : Ingress → interface et API ; API et workers → bases ; workers → équipements (ports 443, 8088, 3009, 1556, 22) et SMTP ; API → AD (636/389) ; DNS. Les bases n'acceptent que leurs clients et ne sortent nulle part |
+| **Secrets** | `envFrom` : **chaque pod recevait tous les secrets**, Redis compris | `secretKeyRef` : chaque conteneur ne reçoit que ses clés (PostgreSQL : son mot de passe ; InfluxDB : les siens ; Redis et l'interface : aucun) |
+| **Images** | `:latest`, `imagePullPolicy: Always`, tags flottants | versions figées (`postgres:15.10-alpine`, `influxdb:2.7.11-alpine`, `redis:7.4.1-alpine`, application `3.0.0`, à remplacer par la version publiée, idéalement par son digest) |
+| **Bases** | `Deployment` | PostgreSQL et InfluxDB en **`StatefulSet`**, qui **réutilisent les PVC existants** : aucune migration de données |
+| **Redis** | volume persistant | cache et broker uniquement : `emptyDir`, persistance désactivée, `maxmemory` |
+| **Santé** | aucune sonde | sondes de démarrage, de disponibilité et de vivacité (`/health`, `/ready`, `pg_isready`, `redis-cli ping`, `celery inspect ping`) ; requêtes et limites CPU/mémoire partout |
+| **Disponibilité** | — | `PodDisruptionBudget` pour l'API et l'interface ; mises à jour progressives sans indisponibilité ; Beat en `Recreate` (jamais deux planificateurs) |
+| **Ingress** | HTTP | **HTTPS uniquement** (secret `noc-tls`, redirection forcée, HSTS d'ingress-nginx), délais adaptés au WebSocket |
+| **AC internes** | — | ConfigMap facultative `noc-ca`, montée dans `/certs`, pour `DEVICE_CA_BUNDLE` et `LDAP_CA_FILE` |
+
+- **Interface sans root.** Elle est désormais servie par `nginxinc/nginx-unprivileged` sur le **port 8080**. Le port publié par Docker Compose ne change pas (`HTTP_PORT`, 80 par défaut).
+
+**Vérification :**
+- `kubeconform -strict` contre les schémas de Kubernetes 1.30 : 28 objets valides sur 28.
+- Contrôle des règles « restricted » sur chaque pod : tous conformes.
+- Les images PostgreSQL, Redis, InfluxDB et Nginx ont été lancées sous Docker avec les **mêmes restrictions** (utilisateur non-root, racine en lecture seule, aucune capacité, `no-new-privileges`). Toutes démarrent et répondent, et l'initialisation d'InfluxDB crée bien son bucket.
+- **Pas encore appliqué sur un vrai cluster.**
+
+**Mise à jour d'un cluster existant :**
+1. **Construire et publier les images** `dagen/v2-dashboard-backend` et `dagen/v2-dashboard-frontend` avec une étiquette de version, puis la reporter dans le manifeste.
+2. **Recréer le secret `noc-secrets`** avec les clés listées en tête du manifeste, dont `JWT_SECRET`. Créer aussi le secret TLS `noc-tls`.
+3. **Supprimer les anciens `Deployment` `postgres` et `influxdb`** (`kubectl -n noc delete deployment postgres influxdb`). Les PVC sont conservés, et les StatefulSets les reprennent.
+4. **Vérifier le namespace du contrôleur Ingress** (`ingress-nginx` par défaut) et les plages d'adresses des équipements, de l'AD et du SMTP dans les `NetworkPolicy`. Le CNI du cluster doit appliquer les `NetworkPolicy` (Calico, Cilium…).
+5. **Appliquer** : `kubectl apply -f k8s-production.yaml`. L'ancien PVC `redis-pvc` peut ensuite être supprimé.
+
 ### Interface (réécrite de zéro)
 
 Les sources React de la v2 (`frontend/src`) étaient perdues. L'interface est réécrite avec React 18, TypeScript, Vite, Tailwind, TanStack Query et Recharts. L'API est appelée sur la même origine (`/api`), ce qui corrige I12 (« localhost:8000 en production »).
@@ -174,9 +206,8 @@ Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) 
 
 Par ordre de priorité :
 
-1. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
-2. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
-3. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
-4. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
-5. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
-6. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
+1. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
+2. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
+3. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
+4. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
+5. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.

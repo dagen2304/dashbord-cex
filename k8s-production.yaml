@@ -1,56 +1,96 @@
----
 # ==============================================================================
-# NAMESPACE & CONFIGURATION
+# NOC INFRA Dashboard v3 — Kubernetes (production)
+#
+# Durcissement :
+#   - Pod Security Standards « restricted » appliqués au namespace : tous les conteneurs
+#     tournent sans root, sans élévation de privilèges, sans capacités, seccomp RuntimeDefault,
+#     système de fichiers racine en lecture seule.
+#   - NetworkPolicy : tout est interdit par défaut, puis seuls les flux nécessaires sont ouverts.
+#   - Secrets : chaque conteneur ne reçoit que les clés dont il a besoin (secretKeyRef).
+#   - Images à version fixe (jamais « latest ») ; remplacez la version de l'application par
+#     celle que vous publiez, idéalement par son digest (image@sha256:…).
+#   - PostgreSQL et InfluxDB en StatefulSet ; ressources, sondes et PodDisruptionBudget partout.
+#   - Ingress en HTTPS uniquement.
+#
+# Ordre d'installation : (1) secret noc-secrets et certificat noc-tls, (2) ce fichier.
+# Voir docs/REFONTE.md, section « Kubernetes ».
 # ==============================================================================
 apiVersion: v1
 kind: Namespace
 metadata:
   name: noc
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
 ---
 # ------------------------------------------------------------------------------
 # SECRET noc-secrets — NE PAS le déclarer dans ce fichier.
-# Il est créé hors dépôt (ou via ExternalSecrets / Vault) AVANT d'appliquer ce manifeste :
+# À créer hors dépôt (ou via ExternalSecrets / Vault) AVANT d'appliquer ce manifeste :
 #
 #   kubectl -n noc create secret generic noc-secrets \
 #     --from-literal=POSTGRES_PASSWORD='...' \
+#     --from-literal=DATABASE_URL='postgresql://noc_admin:<POSTGRES_PASSWORD>@postgres:5432/noc_dashboard' \
 #     --from-literal=DOCKER_INFLUXDB_INIT_PASSWORD='...' \
 #     --from-literal=INFLUXDB_TOKEN='...' \
-#     --from-literal=DOCKER_INFLUXDB_INIT_ADMIN_TOKEN='<identique à INFLUXDB_TOKEN>' \
 #     --from-literal=SECRET_KEY='...' \
 #     --from-literal=JWT_SECRET='<différent de SECRET_KEY>' \
-#     --from-literal=ADMIN_INITIAL_PASSWORD='<mot de passe du 1er admin, à vider après la 1re connexion>' \
-#     --from-literal=DATABASE_URL='postgresql://noc_admin:<POSTGRES_PASSWORD>@postgres:5432/noc_dashboard'
+#     --from-literal=ADMIN_INITIAL_PASSWORD='<à vider après la 1re connexion>' \
+#     --from-literal=LDAP_BIND_PASSWORD='<si LDAP_ENABLED=true>' \
+#     --from-literal=SMTP_USER='' --from-literal=SMTP_PASSWORD=''
 #
-# Générer chaque valeur avec : python -c "import secrets; print(secrets.token_urlsafe(48))"
+# Certificat HTTPS de l'Ingress (secret TLS noc-tls), par exemple :
+#   kubectl -n noc create secret tls noc-tls --cert=fullchain.pem --key=privkey.pem
+# ou via cert-manager (annotation à décommenter sur l'Ingress).
+#
+# Facultatif — autorités de certification internes (montées dans /certs) :
+#   kubectl -n noc create configmap noc-ca \
+#     --from-file=devices-ca.pem=<AC des équipements> --from-file=ldap-ca.pem=<AC des DC>
+# puis renseigner DEVICE_CA_BUNDLE / LDAP_CA_FILE dans noc-config ci-dessous.
+#
+# Générer chaque secret : python -c "import secrets; print(secrets.token_urlsafe(48))"
 # ------------------------------------------------------------------------------
----
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: noc-config
   namespace: noc
 data:
-  # Base de données
+  TZ: Africa/Douala
+  # PostgreSQL
   POSTGRES_USER: noc_admin
   POSTGRES_DB: noc_dashboard
   PGDATA: /var/lib/postgresql/data/pgdata
+  # Redis / InfluxDB
   REDIS_URL: redis://redis:6379/0
-  
-  # InfluxDB
+  INFLUXDB_URL: http://influxdb:8086
+  INFLUXDB_ORG: noc_org
+  INFLUXDB_BUCKET: noc_metrics
   DOCKER_INFLUXDB_INIT_MODE: setup
   DOCKER_INFLUXDB_INIT_USERNAME: noc_operator
   DOCKER_INFLUXDB_INIT_ORG: noc_org
   DOCKER_INFLUXDB_INIT_BUCKET: noc_metrics
-  DOCKER_INFLUXDB_INIT_RETENTION: 30d
-  INFLUXDB_URL: http://influxdb:8086
-  INFLUXDB_ORG: noc_org
-  INFLUXDB_BUCKET: noc_metrics
-  
-  # L'interface appelle l'API sur la même origine (/api) : aucune URL d'API à configurer.
+  DOCKER_INFLUXDB_INIT_RETENTION: 90d
+  # Application
   ADMIN_USERNAME: admin
-  TZ: Africa/Douala
+  ACCESS_TOKEN_MINUTES: "480"
+  DEMO_DATA: "false"           # jamais true en production
+  DEVICE_CA_BUNDLE: ""         # ex. /certs/devices-ca.pem (ConfigMap noc-ca)
+  # Active Directory (voir .env.example)
+  LDAP_ENABLED: "false"
+  LDAP_URL: ""                 # ex. ldaps://dc01.adcm.orangecm:636,ldaps://dc02.adcm.orangecm:636
+  LDAP_START_TLS: "false"
+  LDAP_CA_FILE: ""             # ex. /certs/ldap-ca.pem (ConfigMap noc-ca)
+  LDAP_BASE_DN: ""
+  LDAP_BIND_DN: ""
+  LDAP_GROUP_ADMIN: ""
+  LDAP_GROUP_OPERATOR: ""
+  LDAP_GROUP_VIEWER: ""
+  LDAP_DOMAIN_LABEL: ""
+
 # ==============================================================================
-# PERSISTENT VOLUMES (Stockage des données)
+# STOCKAGE — PVC existants conservés (les StatefulSets les réutilisent : pas de migration)
 # ==============================================================================
 ---
 apiVersion: v1
@@ -59,7 +99,7 @@ metadata:
   name: postgres-pvc
   namespace: noc
 spec:
-  accessModes: [ "ReadWriteOnce" ]
+  accessModes: ["ReadWriteOnce"]
   resources:
     requests:
       storage: 10Gi
@@ -71,62 +111,71 @@ metadata:
   name: influxdb-pvc
   namespace: noc
 spec:
-  accessModes: [ "ReadWriteOnce" ]
+  accessModes: ["ReadWriteOnce"]
   resources:
     requests:
       storage: 20Gi
   storageClassName: rook-ceph-block
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: redis-pvc
-  namespace: noc
-spec:
-  accessModes: [ "ReadWriteOnce" ]
-  resources:
-    requests:
-      storage: 2Gi
-  storageClassName: rook-ceph-block
-
+# Redis n'est qu'un cache / broker (dernier état, verrous) : plus de volume persistant.
+# L'ancien PVC redis-pvc peut être supprimé après la mise à jour.
 
 # ==============================================================================
-# BASES DE DONNÉES (Deployments & Services)
+# BASES DE DONNÉES
 # ==============================================================================
 ---
-# Postgres
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: postgres
   namespace: noc
 spec:
+  serviceName: postgres
   replicas: 1
   selector:
-    matchLabels:
-      app: postgres
+    matchLabels: {app: postgres}
   template:
     metadata:
-      labels:
-        app: postgres
+      labels: {app: postgres}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 70            # utilisateur « postgres » de l'image alpine
+        runAsGroup: 70
+        fsGroup: 70
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: postgres
-          image: postgres:15-alpine
-          ports:
-            - containerPort: 5432
-          envFrom:
-            - configMapRef:
-                name: noc-config
-            - secretRef:
-                name: noc-secrets
+          image: postgres:15.10-alpine
+          ports: [{containerPort: 5432, name: postgres}]
+          envFrom: [{configMapRef: {name: noc-config}}]
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom: {secretKeyRef: {name: noc-secrets, key: POSTGRES_PASSWORD}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          readinessProbe:
+            exec: {command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["sh", "-c", "pg_isready -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\""]}
+            initialDelaySeconds: 30
+            periodSeconds: 20
           volumeMounts:
-            - name: postgres-data
-              mountPath: /var/lib/postgresql/data
+            - {name: data, mountPath: /var/lib/postgresql/data}
+            - {name: run, mountPath: /var/run/postgresql}
+            - {name: tmp, mountPath: /tmp}
       volumes:
-        - name: postgres-data
-          persistentVolumeClaim:
-            claimName: postgres-pvc
+        - name: data
+          persistentVolumeClaim: {claimName: postgres-pvc}
+        - {name: run, emptyDir: {}}
+        - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -134,45 +183,65 @@ metadata:
   name: postgres
   namespace: noc
 spec:
-  ports:
-    - port: 5432
-  selector:
-    app: postgres
-
+  clusterIP: None
+  ports: [{port: 5432, name: postgres}]
+  selector: {app: postgres}
 ---
-# InfluxDB
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: influxdb
   namespace: noc
 spec:
+  serviceName: influxdb
   replicas: 1
   selector:
-    matchLabels:
-      app: influxdb
+    matchLabels: {app: influxdb}
   template:
     metadata:
-      labels:
-        app: influxdb
+      labels: {app: influxdb}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000          # utilisateur « influxdb » de l'image
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: influxdb
-          image: influxdb:2.7-alpine
-          ports:
-            - containerPort: 8086
-          envFrom:
-            - configMapRef:
-                name: noc-config
-            - secretRef:
-                name: noc-secrets
+          image: influxdb:2.7.11-alpine
+          ports: [{containerPort: 8086, name: http}]
+          envFrom: [{configMapRef: {name: noc-config}}]
+          env:
+            - name: DOCKER_INFLUXDB_INIT_PASSWORD
+              valueFrom: {secretKeyRef: {name: noc-secrets, key: DOCKER_INFLUXDB_INIT_PASSWORD}}
+            - name: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+              valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}
+            - name: INFLUX_CONFIGS_PATH       # fichiers de la CLI influx dans le volume, pas dans $HOME
+              value: /var/lib/influxdb2/influx-configs
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true   # vérifié : l'initialisation n'écrit que dans le volume et /tmp
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "1", memory: 2Gi}
+          readinessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 20
           volumeMounts:
-            - name: influxdb-data
-              mountPath: /var/lib/influxdb2
+            - {name: data, mountPath: /var/lib/influxdb2}
+            - {name: tmp, mountPath: /tmp}
       volumes:
-        - name: influxdb-data
-          persistentVolumeClaim:
-            claimName: influxdb-pvc
+        - name: data
+          persistentVolumeClaim: {claimName: influxdb-pvc}
+        - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -180,13 +249,10 @@ metadata:
   name: influxdb
   namespace: noc
 spec:
-  ports:
-    - port: 8086
-  selector:
-    app: influxdb
-
+  clusterIP: None
+  ports: [{port: 8086, name: http}]
+  selector: {app: influxdb}
 ---
-# Redis
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -195,25 +261,40 @@ metadata:
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: redis
+    matchLabels: {app: redis}
   template:
     metadata:
-      labels:
-        app: redis
+      labels: {app: redis}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999           # utilisateur « redis » de l'image
+        runAsGroup: 999
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: redis
-          image: redis:7-alpine
-          ports:
-            - containerPort: 6379
+          image: redis:7.4.1-alpine
+          args: ["--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+          ports: [{containerPort: 6379, name: redis}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 500m, memory: 320Mi}
+          readinessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            periodSeconds: 10
+          livenessProbe:
+            exec: {command: ["redis-cli", "ping"]}
+            initialDelaySeconds: 10
+            periodSeconds: 20
           volumeMounts:
-            - name: redis-data
-              mountPath: /data
+            - {name: data, mountPath: /data}
       volumes:
-        - name: redis-data
-          persistentVolumeClaim:
-            claimName: redis-pvc
+        - {name: data, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -221,16 +302,14 @@ metadata:
   name: redis
   namespace: noc
 spec:
-  ports:
-    - port: 6379
-  selector:
-    app: redis
+  ports: [{port: 6379, name: redis}]
+  selector: {app: redis}
 
 # ==============================================================================
-# APPLICATION (Backend, Celery, Frontend)
+# APPLICATION
+# Image : remplacez 3.0.0 par la version publiée (ou image@sha256:<digest>).
 # ==============================================================================
 ---
-# Backend FastAPI
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -239,24 +318,58 @@ metadata:
 spec:
   replicas: 2
   selector:
-    matchLabels:
-      app: backend
+    matchLabels: {app: backend}
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   template:
     metadata:
-      labels:
-        app: backend
+      labels: {app: backend}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001          # appuser (backend/Dockerfile)
+        runAsGroup: 1001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: backend
-          image: dagen/v2-dashboard-backend:latest
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 8000
-          envFrom:
-            - configMapRef:
-                name: noc-config
-            - secretRef:
-                name: noc-secrets
+          image: dagen/v2-dashboard-backend:3.0.0
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8000, name: http}]
+          envFrom: [{configMapRef: {name: noc-config}}]
+          env:
+            - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
+            - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}
+            - {name: ADMIN_INITIAL_PASSWORD, valueFrom: {secretKeyRef: {name: noc-secrets, key: ADMIN_INITIAL_PASSWORD, optional: true}}}
+            - {name: LDAP_BIND_PASSWORD, valueFrom: {secretKeyRef: {name: noc-secrets, key: LDAP_BIND_PASSWORD, optional: true}}}
+            - {name: SMTP_USER, valueFrom: {secretKeyRef: {name: noc-secrets, key: SMTP_USER, optional: true}}}
+            - {name: SMTP_PASSWORD, valueFrom: {secretKeyRef: {name: noc-secrets, key: SMTP_PASSWORD, optional: true}}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 200m, memory: 384Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          startupProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 5
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /health, port: http}
+            periodSeconds: 20
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: ca, mountPath: /certs, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: ca
+          configMap: {name: noc-ca, optional: true}
 ---
 apiVersion: v1
 kind: Service
@@ -264,70 +377,104 @@ metadata:
   name: backend
   namespace: noc
 spec:
-  ports:
-    - port: 8000
-      targetPort: 8000
-  selector:
-    app: backend
-
+  ports: [{port: 8000, targetPort: http, name: http}]
+  selector: {app: backend}
 ---
-# Celery Worker
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: celery-worker
   namespace: noc
 spec:
-  replicas: 2 # Vous pouvez scaler les workers selon vos besoins
+  replicas: 2
   selector:
-    matchLabels:
-      app: celery-worker
+    matchLabels: {app: celery-worker}
   template:
     metadata:
-      labels:
-        app: celery-worker
+      labels: {app: celery-worker}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: celery-worker
-          image: dagen/v2-dashboard-backend:latest
-          imagePullPolicy: Always
+          image: dagen/v2-dashboard-backend:3.0.0
+          imagePullPolicy: IfNotPresent
           command: ["celery", "-A", "app.tasks.celery_app.celery_app", "worker", "--loglevel=info", "--concurrency=8"]
-          envFrom:
-            - configMapRef:
-                name: noc-config
-            - secretRef:
-                name: noc-secrets
-
+          envFrom: [{configMapRef: {name: noc-config}}]
+          env:
+            - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
+            - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}
+            - {name: SMTP_USER, valueFrom: {secretKeyRef: {name: noc-secrets, key: SMTP_USER, optional: true}}}
+            - {name: SMTP_PASSWORD, valueFrom: {secretKeyRef: {name: noc-secrets, key: SMTP_PASSWORD, optional: true}}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 250m, memory: 512Mi}
+            limits: {cpu: "2", memory: 2Gi}
+          livenessProbe:
+            exec: {command: ["sh", "-c", "celery -A app.tasks.celery_app.celery_app inspect ping -d celery@$HOSTNAME --timeout 10"]}
+            initialDelaySeconds: 60
+            periodSeconds: 120
+            timeoutSeconds: 30
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: ca, mountPath: /certs, readOnly: true}
+      volumes:
+        - {name: tmp, emptyDir: {}}
+        - name: ca
+          configMap: {name: noc-ca, optional: true}
 ---
-# Celery Beat
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: celery-beat
   namespace: noc
 spec:
-  replicas: 1 # Ne JAMAIS mettre plus d'un replica pour Celery Beat !
+  replicas: 1                    # JAMAIS plus d'un planificateur
+  strategy: {type: Recreate}     # pas de recouvrement de deux beat pendant une mise à jour
   selector:
-    matchLabels:
-      app: celery-beat
+    matchLabels: {app: celery-beat}
   template:
     metadata:
-      labels:
-        app: celery-beat
+      labels: {app: celery-beat}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: celery-beat
-          image: dagen/v2-dashboard-backend:latest
-          imagePullPolicy: Always
+          image: dagen/v2-dashboard-backend:3.0.0
+          imagePullPolicy: IfNotPresent
           command: ["celery", "-A", "app.tasks.celery_app.celery_app", "beat", "--loglevel=info", "--schedule=/tmp/celerybeat-schedule"]
-          envFrom:
-            - configMapRef:
-                name: noc-config
-            - secretRef:
-                name: noc-secrets
-
+          envFrom: [{configMapRef: {name: noc-config}}]
+          env:
+            - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
+            - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
+            - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {cpu: 500m, memory: 256Mi}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - {name: tmp, emptyDir: {}}
 ---
-# Frontend React
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -336,28 +483,41 @@ metadata:
 spec:
   replicas: 2
   selector:
-    matchLabels:
-      app: frontend
+    matchLabels: {app: frontend}
+  strategy:
+    rollingUpdate: {maxUnavailable: 0, maxSurge: 1}
   template:
     metadata:
-      labels:
-        app: frontend
+      labels: {app: frontend}
     spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101           # utilisateur « nginx » de nginx-unprivileged
+        runAsGroup: 101
+        seccompProfile: {type: RuntimeDefault}
       containers:
         - name: frontend
-          image: dagen/v2-dashboard-frontend:latest
-          imagePullPolicy: Always
-          ports:
-            - containerPort: 80
-          envFrom:
-            - configMapRef:
-                name: noc-config
+          image: dagen/v2-dashboard-frontend:3.0.0
+          imagePullPolicy: IfNotPresent
+          ports: [{containerPort: 8080, name: http}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {cpu: 250m, memory: 128Mi}
           readinessProbe:
-            httpGet:
-              path: /
-              port: 80
-            initialDelaySeconds: 5
+            httpGet: {path: /, port: http}
             periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: http}
+            periodSeconds: 20
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}   # pid et fichiers temporaires de nginx-unprivileged
+      volumes:
+        - {name: tmp, emptyDir: {}}
 ---
 apiVersion: v1
 kind: Service
@@ -365,14 +525,35 @@ metadata:
   name: frontend
   namespace: noc
 spec:
-  ports:
-    - port: 80
-      targetPort: 80
-  selector:
-    app: frontend
+  ports: [{port: 80, targetPort: http, name: http}]
+  selector: {app: frontend}
 
 # ==============================================================================
-# INGRESS (Routage HTTP basé sur le nom de domaine)
+# DISPONIBILITÉ
+# ==============================================================================
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: backend
+  namespace: noc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: backend}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: frontend
+  namespace: noc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels: {app: frontend}
+
+# ==============================================================================
+# INGRESS — HTTPS uniquement
 # ==============================================================================
 ---
 apiVersion: networking.k8s.io/v1
@@ -380,25 +561,222 @@ kind: Ingress
 metadata:
   name: noc-ingress
   namespace: noc
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "1m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"   # WebSocket temps réel
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    # HSTS : ajouté par défaut par ingress-nginx sur les hôtes TLS (ConfigMap « hsts: true »).
+    # cert-manager.io/cluster-issuer: "<votre-issuer>"   # si cert-manager gère noc-tls
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts: [cex-dashboard.adcm.orangecm]
+      secretName: noc-tls
   rules:
     - host: cex-dashboard.adcm.orangecm
       http:
         paths:
-          # Les requêtes vers l'API sont redirigées vers le backend (qui gère nativement /api)
           - path: /api
             pathType: Prefix
             backend:
-              service:
-                name: backend
-                port:
-                  number: 8000
-          # Le reste du trafic est dirigé vers le frontend
+              service: {name: backend, port: {name: http}}
           - path: /
             pathType: Prefix
             backend:
-              service:
-                name: frontend
-                port:
-                  number: 80
+              service: {name: frontend, port: {name: http}}
+
+# ==============================================================================
+# RÉSEAU — tout est interdit par défaut, puis seuls les flux nécessaires sont ouverts.
+# Adaptez si besoin : namespace du contrôleur Ingress (ici « ingress-nginx ») et plages
+# d'adresses des équipements / contrôleurs de domaine / serveur SMTP (ici RFC 1918).
+# ==============================================================================
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: noc
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns
+  namespace: noc
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels: {k8s-app: kube-dns}
+      ports:
+        - {protocol: UDP, port: 53}
+        - {protocol: TCP, port: 53}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: frontend
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: frontend}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+      ports: [{protocol: TCP, port: 8080}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: backend}}}]
+      ports: [{protocol: TCP, port: 8000}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: backend}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: ingress-nginx}
+        - podSelector:
+            matchLabels: {app: frontend}
+      ports: [{protocol: TCP, port: 8000}]
+  egress:
+    - to: [{podSelector: {matchLabels: {app: postgres}}}]
+      ports: [{protocol: TCP, port: 5432}]
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{protocol: TCP, port: 6379}]
+    - to: [{podSelector: {matchLabels: {app: influxdb}}}]
+      ports: [{protocol: TCP, port: 8086}]
+    # Inventaire : détection automatique et lecture des certificats des équipements
+    - to: &internal-networks
+        - ipBlock: {cidr: 10.0.0.0/8}
+        - ipBlock: {cidr: 172.16.0.0/12}
+        - ipBlock: {cidr: 192.168.0.0/16}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 8088}
+        - {protocol: TCP, port: 3009}
+        - {protocol: TCP, port: 1556}
+        - {protocol: TCP, port: 22}
+    # Active Directory (LDAPS / LDAP+StartTLS)
+    - to: *internal-networks
+      ports:
+        - {protocol: TCP, port: 636}
+        - {protocol: TCP, port: 389}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: celery-worker
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: celery-worker}
+  policyTypes: [Ingress, Egress]
+  ingress: []                    # aucun flux entrant
+  egress:
+    - to: [{podSelector: {matchLabels: {app: postgres}}}]
+      ports: [{protocol: TCP, port: 5432}]
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{protocol: TCP, port: 6379}]
+    - to: [{podSelector: {matchLabels: {app: influxdb}}}]
+      ports: [{protocol: TCP, port: 8086}]
+    # Collecte : API des équipements (vCenter, baies, sauvegarde, objet, Veritas en SSH)
+    - to:
+        - ipBlock: {cidr: 10.0.0.0/8}
+        - ipBlock: {cidr: 172.16.0.0/12}
+        - ipBlock: {cidr: 192.168.0.0/16}
+      ports:
+        - {protocol: TCP, port: 443}
+        - {protocol: TCP, port: 8088}
+        - {protocol: TCP, port: 3009}
+        - {protocol: TCP, port: 1556}
+        - {protocol: TCP, port: 22}
+    # Alertes e-mail (SMTP)
+    - to:
+        - ipBlock: {cidr: 10.0.0.0/8}
+        - ipBlock: {cidr: 172.16.0.0/12}
+        - ipBlock: {cidr: 192.168.0.0/16}
+      ports:
+        - {protocol: TCP, port: 25}
+        - {protocol: TCP, port: 587}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: celery-beat
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: celery-beat}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to: [{podSelector: {matchLabels: {app: postgres}}}]
+      ports: [{protocol: TCP, port: 5432}]
+    - to: [{podSelector: {matchLabels: {app: redis}}}]
+      ports: [{protocol: TCP, port: 6379}]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: postgres}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: backend}}
+        - podSelector: {matchLabels: {app: celery-worker}}
+        - podSelector: {matchLabels: {app: celery-beat}}
+      ports: [{protocol: TCP, port: 5432}]
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: redis}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: backend}}
+        - podSelector: {matchLabels: {app: celery-worker}}
+        - podSelector: {matchLabels: {app: celery-beat}}
+      ports: [{protocol: TCP, port: 6379}]
+  egress: []
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: influxdb
+  namespace: noc
+spec:
+  podSelector:
+    matchLabels: {app: influxdb}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector: {matchLabels: {app: backend}}
+        - podSelector: {matchLabels: {app: celery-worker}}
+      ports: [{protocol: TCP, port: 8086}]
+  egress: []
