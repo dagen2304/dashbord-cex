@@ -96,6 +96,9 @@ services:
   celery_worker:
     image: noc-backend:latest
     container_name: noc_celery_worker
+    # L'image hérite du healthcheck HTTP de l'API (:8000), qui n'a pas de sens ici.
+    healthcheck:
+      disable: true
     restart: always
     command: celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concurrency=8
     environment: *backend-env
@@ -112,6 +115,9 @@ services:
   celery_beat:
     image: noc-backend:latest
     container_name: noc_celery_beat
+    # L'image hérite du healthcheck HTTP de l'API (:8000), qui n'a pas de sens ici.
+    healthcheck:
+      disable: true
     restart: always
     # Fichier d'état de Beat dans /tmp : l'utilisateur non-root ne peut pas écrire dans /app.
     command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
