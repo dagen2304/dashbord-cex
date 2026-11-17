@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     # Web
     cors_origins: str = ""  # liste séparée par des virgules ; vide = même origine uniquement
 
+    # Mode démonstration (app/demo) : équipements fictifs *.demo.invalid. Jamais en production.
+    demo_data: bool = False
+
     # Collecte
     collector_timeout_s: int = 120  # durée max d'une collecte d'un équipement
     login_max_attempts: int = 5

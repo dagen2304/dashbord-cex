@@ -5,10 +5,10 @@ import clsx from 'clsx'
 import { AlertTriangle, CheckCircle2, CircleDashed, Clock, HardDrive, OctagonAlert, Search } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { CATEGORY_LABEL, TYPE_LABEL, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
+import { CATEGORY_LABEL, TYPE_LABEL, isDemoHost, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
 import type { DeviceState } from '@/lib/types'
 import { Sparkline } from '@/components/charts'
-import { EmptyState, ErrorState, Input, PageHeader, Segmented, Spinner, Stat, StatusBadge, statusTone } from '@/components/ui'
+import { DemoBadge, EmptyState, ErrorState, Input, PageHeader, Segmented, Spinner, Stat, StatusBadge, statusTone } from '@/components/ui'
 
 const CATEGORIES = ['VIRTUALIZATION', 'STORAGE', 'BACKUP', 'OBJECT'] as const
 type Filter = 'ALL' | (typeof CATEGORIES)[number]
@@ -29,7 +29,9 @@ function DeviceCard({ d }: { d: DeviceState }) {
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className="truncate text-sm font-semibold group-hover:text-accent">{d.device_name}</h3>
+          <h3 className="flex items-center gap-2 text-sm font-semibold group-hover:text-accent">
+            <span className="truncate">{d.device_name}</span>{isDemoHost(d.hostname_ip) ? <DemoBadge /> : null}
+          </h3>
           <p className="truncate text-2xs text-muted">{TYPE_LABEL[d.device_type] ?? d.device_type} · <span className="font-mono">{d.hostname_ip}</span></p>
         </div>
         <StatusBadge status={d.status} />

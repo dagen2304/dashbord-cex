@@ -4,7 +4,8 @@ from app.core.config import settings
 
 # Pas de backend de résultats : les tâches écrivent elles-mêmes dans Redis/InfluxDB/PostgreSQL.
 # (La v2 stockait chaque résultat complet — plusieurs Mo pour un vCenter — dans Redis.)
-celery_app = Celery("noc_tasks", broker=settings.redis_url, include=["app.tasks.scheduler"])
+_modules = ["app.tasks.scheduler"] + (["app.demo.tasks"] if settings.demo_data else [])
+celery_app = Celery("noc_tasks", broker=settings.redis_url, include=_modules)
 
 celery_app.conf.update(
     task_serializer="json",
@@ -21,3 +22,7 @@ celery_app.conf.update(
         "dispatch-polling": {"task": "app.tasks.scheduler.dispatch_polling", "schedule": 15.0},
     },
 )
+
+if settings.demo_data:
+    # Mode démonstration : rafraîchit les équipements fictifs chaque minute (voir app/demo).
+    celery_app.conf.beat_schedule["refresh-demo-data"] = {"task": "app.demo.tasks.refresh_demo_data", "schedule": 60.0}

@@ -3,10 +3,10 @@ import { Link, useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, Clock, OctagonAlert } from 'lucide-react'
 import { api } from '@/lib/api'
-import { CATEGORY_LABEL, METRIC_META, TYPE_LABEL, dateTime, fmt, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
+import { CATEGORY_LABEL, METRIC_META, TYPE_LABEL, dateTime, isDemoHost, fmt, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
 import type { DeviceState, SeriesPoint } from '@/lib/types'
 import { TimeSeriesChart } from '@/components/charts'
-import { Card, EmptyState, ErrorState, FilterField, PageHeader, Segmented, Select, Spinner, StatusBadge, UsageBar } from '@/components/ui'
+import { Card, DemoBadge, EmptyState, ErrorState, FilterField, PageHeader, Segmented, Select, Spinner, StatusBadge, UsageBar } from '@/components/ui'
 
 const RANGES = [
   { value: 6, label: '6 h' },
@@ -56,6 +56,7 @@ export default function DeviceDetail() {
               <Clock className="size-3.5" aria-hidden />
               Collecté {relativeTime(d.collected_at)}{d.stale && d.collected_at ? ' (périmé)' : ''}
             </span>
+            {isDemoHost(d.hostname_ip) ? <DemoBadge /> : null}
             <StatusBadge status={d.status} />
           </div>
         }

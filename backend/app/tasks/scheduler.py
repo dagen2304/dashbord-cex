@@ -23,6 +23,7 @@ from app.core.redis_client import (
     HISTORY_GATE_KEY, LATEST_KEY, LOCK_KEY, NEXT_POLL_KEY, UPDATES_CHANNEL, r_client,
 )
 from app.core.smtp import send_latency_alert_email
+from app.demo import DEMO_SUFFIX
 from app.models.application import VM
 from app.models.inventory import InfrastructureDevice, LatencyAnomaly, MetricHistory, PasswordDecryptionError, ServiceDiscovery
 from app.services.collectors import COLLECTOR_REGISTRY
@@ -47,8 +48,14 @@ def dispatch_polling() -> int:
                     InfrastructureDevice.is_archived.is_(False))
             .all()
         ]
+        demo_ids = {
+            d.id for d in db.query(InfrastructureDevice.id)
+            .filter(InfrastructureDevice.hostname_ip.like(f"%{DEMO_SUFFIX}")).all()
+        }
     queued = 0
     for device_id in device_ids:
+        if device_id in demo_ids:
+            continue  # équipement fictif du mode démo : jamais de vraie collecte
         # SET NX : vrai seulement si aucune collecte n'est prévue pour cet équipement.
         if r_client.set(NEXT_POLL_KEY.format(device_id=device_id), "1", nx=True, ex=interval):
             collect_device.delay(device_id)

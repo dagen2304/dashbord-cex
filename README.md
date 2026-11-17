@@ -77,6 +77,16 @@ cd backend && .venv/bin/python -m pytest tests -q
 cd frontend && npm run build
 ```
 
+## Mode démonstration
+
+Pour un environnement de test ou de formation, `DEMO_DATA=true` crée 9 équipements fictifs : vCenter, baies, sauvegarde et objet, avec leurs VMs, datastores, alertes, saturations et historique capacitaire. Leurs données sont rafraîchies chaque minute par le même pipeline que les vraies collectes.
+
+- Leurs adresses se terminent par `.demo.invalid`, un domaine réservé : la collecte réelle les ignore toujours.
+- L'interface les signale par un badge « Démo ».
+- Pour les retirer, il suffit de les archiver depuis l'inventaire, puis de repasser `DEMO_DATA=false`.
+
+**Ne jamais l'activer en production.**
+
 ## Rôles
 
 | Rôle | Peut |

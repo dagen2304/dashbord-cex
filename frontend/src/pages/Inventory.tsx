@@ -3,10 +3,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Archive, HardDrive, Pencil, Plus, Radar } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
-import { CATEGORY_LABEL, TYPE_LABEL, dateTime, relativeTime } from '@/lib/format'
+import { CATEGORY_LABEL, TYPE_LABEL, dateTime, isDemoHost, relativeTime } from '@/lib/format'
 import type { Device, Vendor } from '@/lib/types'
 import {
-  Button, Card, EmptyState, ErrorState, Field, IconButton, InlineError, Input, Modal, PageHeader, Select, Spinner, StatusBadge,
+  Button, Card, DemoBadge, EmptyState, ErrorState, Field, IconButton, InlineError, Input, Modal, PageHeader, Select, Spinner, StatusBadge,
 } from '@/components/ui'
 
 interface FormState {
@@ -158,7 +158,7 @@ export default function Inventory() {
               <tbody>
                 {devices.data.map((d) => (
                   <tr key={d.id} className={d.is_archived ? 'opacity-60' : undefined}>
-                    <td className="font-medium">{d.display_name}</td>
+                    <td className="font-medium"><span className="flex items-center gap-2">{d.display_name}{isDemoHost(d.hostname_ip) ? <DemoBadge /> : null}</span></td>
                     <td>{TYPE_LABEL[d.device_type] ?? d.device_type}<p className="text-2xs text-muted">{CATEGORY_LABEL[d.category] ?? d.category}</p></td>
                     <td className="font-mono text-2xs">{d.hostname_ip}:{d.port}</td>
                     <td className="font-mono text-2xs">{d.username}</td>

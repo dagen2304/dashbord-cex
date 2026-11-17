@@ -17,6 +17,7 @@ x-backend-env: &backend-env
   SMTP_USER: ${SMTP_USER:-}
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   CORS_ORIGINS: ${CORS_ORIGINS:-}
+  DEMO_DATA: ${DEMO_DATA:-false}
   TZ: Africa/Douala
 
 x-backend-deps: &backend-deps

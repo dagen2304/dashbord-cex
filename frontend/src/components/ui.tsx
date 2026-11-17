@@ -304,3 +304,13 @@ export function Segmented<T extends string | number>({ value, onChange, items, l
     </div>
   )
 }
+
+/** Badge des équipements fictifs du mode démonstration. */
+export function DemoBadge() {
+  return (
+    <span className="inline-flex items-center rounded border border-dashed border-muted px-1.5 py-px text-2xs font-medium uppercase tracking-wide text-muted"
+      title="Équipement fictif du mode démonstration — données générées">
+      Démo
+    </span>
+  )
+}

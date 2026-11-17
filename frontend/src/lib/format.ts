@@ -111,3 +111,8 @@ export function keyMetrics(category: string, type: string): string[] {
   if (category === 'VIRTUALIZATION') return ['cpu_usage_pct', 'ram_usage_pct', 'datastores_usage_pct']
   return ['capacity_usage_pct', 'iops', 'latency_ms']
 }
+
+/** Équipement fictif du mode démonstration (domaine réservé .demo.invalid). */
+export function isDemoHost(host: string | null | undefined): boolean {
+  return Boolean(host && host.toLowerCase().endsWith('.demo.invalid'))
+}
