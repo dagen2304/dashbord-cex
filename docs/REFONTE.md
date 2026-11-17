@@ -62,7 +62,7 @@ Les numéros S…, C… et I… renvoient à l'audit initial, conservé dans l'h
 | C12 | Migrations idempotentes au démarrage (`app/core/migrations.py`) pour les colonnes ajoutées aux bases existantes. |
 | — | **Pilote PostgreSQL : `psycopg` v3.** SQLAlchemy 2.1 l'utilise par défaut pour les URL `postgresql://` ; avec `psycopg2`, le backend ne démarrait pas. |
 | I14 | Image Python 3.12 construite en deux étapes, sans outils de compilation dans l'image finale. Dépendances figées à la version exacte. |
-| C14 | **66 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
+| C14 | **70 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
 | I17 | Fichiers parasites supprimés : scripts ponctuels, `celery.log`, `celerybeat-schedule`, `graphify-out/`. |
 
 ### Latences disque réelles (vCenter)
@@ -152,6 +152,17 @@ Les variables à renseigner sont dans `.env.example`.
 4. **Vérifier le namespace du contrôleur Ingress** (`ingress-nginx` par défaut) et les plages d'adresses des équipements, de l'AD et du SMTP dans les `NetworkPolicy`. Le CNI du cluster doit appliquer les `NetworkPolicy` (Calico, Cilium…).
 5. **Appliquer** : `kubectl apply -f k8s-production.yaml`. L'ancien PVC `redis-pvc` peut ensuite être supprimé.
 
+### Sessions Dell Unity (I15)
+
+La v2 « fermait » sa session Unisphere par `DELETE …/loginSessionInfo/instances/0`, qui n'existe pas dans l'API. L'échec était masqué, et les sessions restaient ouvertes à chaque collecte, soit une par minute, jusqu'à la limite de la baie. Les identifiants étaient en plus renvoyés à chaque requête.
+
+Désormais, comme le prévoit le guide de l'API REST Unisphere :
+1. **Ouverture** : `GET /api/types/loginSessionInfo` en Basic Auth. La baie renvoie un cookie de session et le jeton `EMC-CSRF-TOKEN`.
+2. **Requêtes suivantes** : le cookie seul suffit, les identifiants ne sont plus renvoyés.
+3. **Fermeture** : `POST /api/types/loginSessionInfo/action/logout` (`localCleanupOnly`, avec le jeton CSRF). Elle est **toujours tentée** dès qu'une session a été ouverte, même si la collecte échoue. Un refus est journalisé.
+
+**Vérification.** 4 tests sur un faux Unisphere : cookie, absence d'identifiants, CSRF, corps de la déconnexion, collecte en échec, connexion refusée, déconnexion refusée. **À confirmer sur une vraie baie** : le compteur de sessions de l'utilisateur de service doit rester stable dans Unisphere.
+
 ### Interface (réécrite de zéro)
 
 Les sources React de la v2 (`frontend/src`) étaient perdues. L'interface est réécrite avec React 18, TypeScript, Vite, Tailwind, TanStack Query et Recharts. L'API est appelée sur la même origine (`/api`), ce qui corrige I12 (« localhost:8000 en production »).
@@ -207,7 +218,6 @@ Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) 
 Par ordre de priorité :
 
 1. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
-2. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
-3. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
-4. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
-5. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
+2. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
+3. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
+4. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.

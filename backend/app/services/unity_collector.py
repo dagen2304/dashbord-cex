@@ -12,7 +12,14 @@ class UnityCollector(BaseCollector):
     Collecteur de production pour les baies de stockage Dell Unity (XT).
 
     API  : REST Unisphere sur HTTPS port 443
-    Auth : Basic Auth + Header EMC-CSRF-TOKEN (récupéré sur /api/types/loginSessionInfo)
+    Session (guide « Unisphere Management REST API ») :
+      - connexion : GET /api/types/loginSessionInfo en Basic Auth → cookie de session
+        + en-tête EMC-CSRF-TOKEN (obligatoire sur les POST) ;
+      - requêtes suivantes : cookie uniquement (les identifiants ne sont plus renvoyés,
+        sinon chaque requête peut ouvrir une nouvelle session) ;
+      - déconnexion : POST /api/types/loginSessionInfo/action/logout, toujours tentée
+        dès qu'une session a été ouverte, même si la collecte échoue. Sans elle, les
+        sessions s'accumulent jusqu'à la limite de la baie.
 
     Métriques collectées :
         - IOPS (lecture + écriture) via metric real-time query
@@ -57,21 +64,20 @@ class UnityCollector(BaseCollector):
             "Accept": "application/json",
         })
 
+        logged_in = False
         try:
-            # ── 1. Authentification + CSRF Token ──────────────────────────
-            logger.info(f"[Unity] Authentification sur {base_url}/types/loginSessionInfo/instances")
-            login_resp = session.get(
-                f"{base_url}/types/loginSessionInfo/instances",
-                params={"compact": "true"},
-                timeout=self._TIMEOUT,
-            )
+            # ── 1. Ouverture de session + jeton CSRF ──────────────────────
+            login_resp = session.get(f"{base_url}/types/loginSessionInfo", timeout=self._TIMEOUT)
             login_resp.raise_for_status()
-
-            # Extraire le CSRF token des cookies/headers
+            logged_in = True
             csrf_token = login_resp.headers.get("EMC-CSRF-TOKEN", "")
             if csrf_token:
                 session.headers.update({"EMC-CSRF-TOKEN": csrf_token})
-            logger.info(f"[Unity] Authentifié, CSRF={'présent' if csrf_token else 'absent'}")
+            else:
+                logger.warning(f"[Unity] {host} : pas de jeton EMC-CSRF-TOKEN (la déconnexion risque d'être refusée)")
+            # La suite utilise le cookie de session : on ne renvoie plus les identifiants.
+            session.auth = None
+            logger.info(f"[Unity] Session ouverte sur {host}")
 
             # ── 2. Santé du système ───────────────────────────────────────
             health_resp = session.get(
@@ -192,8 +198,18 @@ class UnityCollector(BaseCollector):
             return payload
 
         finally:
-            try:
-                session.delete(f"{base_url}/types/loginSessionInfo/instances/0", timeout=60)
-            except Exception:
-                pass
+            if logged_in:
+                self._logout(session, base_url, host)
             session.close()
+
+    def _logout(self, session, base_url: str, host: str) -> None:
+        """Ferme la session REST côté baie (localCleanupOnly : n'affecte pas une éventuelle session SSO)."""
+        try:
+            resp = session.post(f"{base_url}/types/loginSessionInfo/action/logout",
+                                json={"localCleanupOnly": True}, timeout=15)
+            if resp.status_code in (200, 202, 204):
+                logger.info(f"[Unity] Session fermée sur {host}")
+            else:
+                logger.warning(f"[Unity] Déconnexion refusée par {host} : HTTP {resp.status_code} — session laissée ouverte")
+        except Exception as exc:
+            logger.warning(f"[Unity] Déconnexion impossible sur {host} : {type(exc).__name__}: {exc}")
