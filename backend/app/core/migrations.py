@@ -14,6 +14,10 @@ logger = logging.getLogger(__name__)
 
 _STATEMENTS = [
     "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS last_sync_error VARCHAR",
+    # Les équipements déjà présents gardent le comportement de la v2 (pas de vérification),
+    # signalé dans l'interface ; les nouveaux sont créés en « verify » par l'application.
+    "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS tls_mode VARCHAR NOT NULL DEFAULT 'insecure'",
+    "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS tls_fingerprint VARCHAR",
     "CREATE INDEX IF NOT EXISTS ix_metrics_history_device_ts ON metrics_history (device_id, resource_name, timestamp)",
 ]
 

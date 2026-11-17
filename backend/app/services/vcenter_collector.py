@@ -1,9 +1,9 @@
-import ssl
 import logging
 from typing import Dict, Any
 from pyVmomi import vim, vmodl
 from pyVim.connect import SmartConnect, Disconnect
 from app.services.base_collector import BaseCollector
+from app.services.tls import vsphere_connect_kwargs
 from app.services.vsphere_perf import datastore_latencies, datastore_uuid, vm_latencies
 
 logger = logging.getLogger(__name__)
@@ -100,10 +100,8 @@ class VCenterCollector(BaseCollector):
 
         si = None
         try:
-            # Contexte SSL — désactive la vérification pour les certificats auto-signés
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            # Vérification du certificat selon la politique de l'équipement (verify / pin / insecure).
+            tls_kwargs = vsphere_connect_kwargs(self.tls_policy, self.device_name)
 
             logger.info(f"[vCenter] 🔌 Tentative de connexion sécurisée à l'équipement {host}:{port} (User: {user})")
             si = SmartConnect(
@@ -111,7 +109,7 @@ class VCenterCollector(BaseCollector):
                 port=port,
                 user=user,
                 pwd=password,
-                sslContext=ssl_context,
+                **tls_kwargs,
             )
             # Note : pas d'atexit.register — le bloc finally ci-dessous gère la déconnexion proprement
             logger.info(f"[vCenter] ✅ Connexion réussie à {host}. Démarrage de la collecte PropertyCollector (ultra-rapide).")

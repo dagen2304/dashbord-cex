@@ -26,6 +26,17 @@ class BaseCollector(ABC):
         """
         pass
 
+    # ── Connexions vérifiées (voir app/services/tls.py) ──────────────────────
+    @property
+    def tls_policy(self):
+        from app.services.tls import TlsPolicy
+        return TlsPolicy.from_config(self.config)
+
+    def http_session(self):
+        """Session HTTPS appliquant la politique TLS de l'équipement (verify / pin / insecure)."""
+        from app.services.tls import http_session
+        return http_session(self.tls_policy, self.device_name)
+
     def get_base_payload(self, status: str = "HEALTHY") -> Dict[str, Any]:
         """
         Génère la structure JSON commune normalisée pour tous les collecteurs.

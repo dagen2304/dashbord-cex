@@ -100,6 +100,7 @@ def _collect(device_id: str) -> None:
         config = {
             "simulate": False, "host": device.hostname_ip, "port": device.port,
             "username": device.username, "password": password,
+            "tls_mode": device.tls_mode, "tls_fingerprint": device.tls_fingerprint,
         }
         name, dtype, interval = device.display_name, device.device_type, get_polling_interval(db)
 

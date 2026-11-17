@@ -1,10 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, HardDrive, Pencil, Plus, Radar } from 'lucide-react'
+import { Archive, HardDrive, Lock, LockOpen, Pencil, Pin, Plus, Radar, ScanSearch, ShieldAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { CATEGORY_LABEL, TYPE_LABEL, dateTime, isDemoHost, relativeTime } from '@/lib/format'
-import type { Device, Vendor } from '@/lib/types'
+import type { Device, TlsInspection, TlsMode, Vendor } from '@/lib/types'
 import {
   Button, Card, DemoBadge, EmptyState, ErrorState, Field, IconButton, InlineError, Input, Modal, PageHeader, Select, Spinner, StatusBadge,
 } from '@/components/ui'
@@ -17,20 +17,32 @@ interface FormState {
   username: string
   password: string
   is_active: boolean
+  tls_mode: TlsMode
+  tls_fingerprint: string
 }
 
-const EMPTY: FormState = { display_name: '', hostname_ip: '', device_type: '', port: '', username: '', password: '', is_active: true }
+const SSH_TYPES = new Set(['VERITAS_ACCESS'])
+
+const EMPTY: FormState = { display_name: '', hostname_ip: '', device_type: '', port: '', username: '', password: '', is_active: true, tls_mode: 'verify', tls_fingerprint: '' }
 
 function DeviceForm({ device, open, onClose, vendors }: { device: Device | null; open: boolean; onClose: () => void; vendors: Vendor[] }) {
   const qc = useQueryClient()
   const [form, setForm] = useState<FormState>(EMPTY)
   const [discoverMsg, setDiscoverMsg] = useState<string | null>(null)
+  const [inspection, setInspection] = useState<TlsInspection | null>(null)
+  const isSsh = SSH_TYPES.has(form.device_type)
+  useEffect(() => {
+    // Pas d'autorité de certification en SSH : seule l'empreinte de la clé d'hôte permet de vérifier.
+    if (isSsh && form.tls_mode === 'verify') setForm((f) => ({ ...f, tls_mode: 'pin' }))
+  }, [isSsh, form.tls_mode])
+  useEffect(() => setInspection(null), [form.hostname_ip, form.port, form.device_type])
 
   useEffect(() => {
     if (!open) return
     setDiscoverMsg(null)
+    setInspection(null)
     setForm(device
-      ? { display_name: device.display_name, hostname_ip: device.hostname_ip, device_type: device.device_type, port: String(device.port), username: device.username, password: '', is_active: device.is_active }
+      ? { display_name: device.display_name, hostname_ip: device.hostname_ip, device_type: device.device_type, port: String(device.port), username: device.username, password: '', is_active: device.is_active, tls_mode: device.tls_mode, tls_fingerprint: device.tls_fingerprint ?? '' }
       : EMPTY)
   }, [open, device])
 
@@ -45,6 +57,13 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
     onError: (e) => setDiscoverMsg((e as Error).message),
   })
 
+  const inspect = useMutation({
+    mutationFn: () => api.post<TlsInspection>('/inventory/tls/inspect', {
+      hostname_ip: form.hostname_ip.trim(), port: Number(form.port), device_type: form.device_type,
+    }),
+    onSuccess: setInspection,
+  })
+
   const save = useMutation({
     mutationFn: () => {
       const body: Record<string, unknown> = {
@@ -52,6 +71,8 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
         port: Number(form.port), username: form.username.trim(),
       }
       if (form.password) body.password = form.password
+      body.tls_mode = form.tls_mode
+      body.tls_fingerprint = form.tls_mode === 'pin' ? form.tls_fingerprint.trim() : null
       if (device) return api.put<Device>(`/inventory/devices/${device.id}`, { ...body, is_active: form.is_active })
       return api.post<Device>('/inventory/devices', body)
     },
@@ -62,7 +83,8 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
     },
   })
 
-  const valid = form.display_name.trim() && form.hostname_ip.trim() && form.device_type && Number(form.port) > 0 && form.username.trim() && (device || form.password)
+  const valid = form.display_name.trim() && form.hostname_ip.trim() && form.device_type && Number(form.port) > 0 && form.username.trim() &&
+    (device || form.password) && (form.tls_mode !== 'pin' || form.tls_fingerprint.trim())
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -96,6 +118,57 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
           </Field>
           <Field label="Port" htmlFor="d-port"><Input id="d-port" type="number" min={1} max={65535} className="num" value={form.port} onChange={(e) => set('port', e.target.value)} /></Field>
         </div>
+        <fieldset className="flex flex-col gap-3 rounded-md border border-border p-3">
+          <legend className="px-1 text-sm font-medium text-fg-2">Sécurité de la connexion</legend>
+          <Field label={isSsh ? 'Vérification de la clé d’hôte SSH' : 'Vérification du certificat'} htmlFor="d-tls"
+            hint={form.tls_mode === 'verify' ? 'Certificat signé par une autorité reconnue (ou l’AC interne DEVICE_CA_BUNDLE) et nom d’hôte correspondant.'
+              : form.tls_mode === 'pin' ? 'Seul ce certificat précis est accepté. Recommandé pour les certificats auto-signés et les accès par IP.'
+              : 'Aucune vérification : une interception permettrait de voler le mot de passe du compte de service.'}>
+            <Select id="d-tls" value={form.tls_mode} onChange={(e) => set('tls_mode', e.target.value as TlsMode)}>
+              {!isSsh ? <option value="verify">Vérifié par une autorité de certification</option> : null}
+              <option value="pin">{isSsh ? 'Empreinte de la clé d’hôte épinglée' : 'Empreinte du certificat épinglée'}</option>
+              <option value="insecure">Non vérifié (déconseillé)</option>
+            </Select>
+          </Field>
+          {form.tls_mode === 'pin' ? (
+            <Field label="Empreinte SHA-256" htmlFor="d-fp">
+              <Input id="d-fp" className="font-mono text-2xs" placeholder="64 caractères hexadécimaux" value={form.tls_fingerprint}
+                onChange={(e) => set('tls_fingerprint', e.target.value)} />
+            </Field>
+          ) : null}
+          <div>
+            <Button type="button" size="sm" icon={ScanSearch} loading={inspect.isPending}
+              disabled={!form.hostname_ip.trim() || !form.device_type || !Number(form.port)} onClick={() => inspect.mutate()}>
+              {isSsh ? 'Lire la clé SSH' : 'Lire le certificat'}
+            </Button>
+          </div>
+          <InlineError message={inspect.isError ? (inspect.error as Error).message : null} />
+          {inspection ? (
+            <div className="rounded-md bg-surface-2 p-3 text-2xs" role="status">
+              <dl className="grid grid-cols-[7rem_1fr] gap-x-2 gap-y-1">
+                {inspection.kind === 'tls' ? <>
+                  <dt className="text-muted">Sujet</dt><dd className="break-all">{inspection.subject}</dd>
+                  <dt className="text-muted">Émetteur</dt><dd className="break-all">{inspection.issuer}{inspection.self_signed ? ' (auto-signé)' : ''}</dd>
+                  <dt className="text-muted">Noms</dt><dd className="break-all">{inspection.subject_alt_names?.join(', ') || '—'}</dd>
+                  <dt className="text-muted">Validité</dt><dd>jusqu’au {dateTime(inspection.not_after)}{inspection.expired ? ' — EXPIRÉ' : ''}</dd>
+                  <dt className="text-muted">Approuvé</dt><dd>{inspection.trusted ? 'Oui (autorité reconnue)' : `Non — ${inspection.trust_error ?? ''}`}</dd>
+                </> : <>
+                  <dt className="text-muted">Type de clé</dt><dd>{inspection.key_type}</dd>
+                </>}
+                <dt className="text-muted">SHA-256</dt><dd className="break-all font-mono">{inspection.sha256}</dd>
+              </dl>
+              <p className="mt-2 text-muted">Comparez cette empreinte avec celle affichée par la console de l’équipement avant de l’épingler.</p>
+              <div className="mt-2 flex gap-2">
+                <Button type="button" size="sm" icon={Pin} onClick={() => setForm((f) => ({ ...f, tls_mode: 'pin', tls_fingerprint: inspection.sha256 }))}>
+                  Épingler cette empreinte
+                </Button>
+                {inspection.trusted && !isSsh ? (
+                  <Button type="button" size="sm" variant="ghost" onClick={() => set('tls_mode', 'verify')}>Utiliser la vérification par AC</Button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+        </fieldset>
         <Field label="Compte de service" htmlFor="d-user" hint="Utilisez un compte en lecture seule dédié à la supervision.">
           <Input id="d-user" autoComplete="off" value={form.username} onChange={(e) => set('username', e.target.value)} />
         </Field>
@@ -114,6 +187,12 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
   )
 }
 
+function TlsBadge({ mode }: { mode: TlsMode }) {
+  if (mode === 'verify') return <span className="inline-flex items-center gap-1 text-2xs text-fg-2" title="Certificat vérifié par une autorité de certification"><Lock className="size-3.5 text-ok" aria-hidden />AC</span>
+  if (mode === 'pin') return <span className="inline-flex items-center gap-1 text-2xs text-fg-2" title="Empreinte épinglée"><Pin className="size-3.5 text-ok" aria-hidden />Empreinte</span>
+  return <span className="inline-flex items-center gap-1 text-2xs font-medium text-fg" title="Connexion non vérifiée"><LockOpen className="size-3.5 text-warn" aria-hidden />Non vérifié</span>
+}
+
 export default function Inventory() {
   const { can } = useAuth()
   const isAdmin = can('admin')
@@ -128,6 +207,7 @@ export default function Inventory() {
     queryFn: () => api.get<Device[]>('/inventory/devices', { include_archived: showArchived }),
     refetchInterval: 60_000,
   })
+  const insecureCount = (devices.data ?? []).filter((d) => !d.is_archived && d.tls_mode === 'insecure' && !isDemoHost(d.hostname_ip)).length
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => api.get<Vendor[]>('/inventory/vendors'), staleTime: Infinity })
 
   const archive = useMutation({
@@ -148,13 +228,22 @@ export default function Inventory() {
           {isAdmin ? <Button variant="primary" icon={Plus} onClick={() => { setEditing(null); setFormOpen(true) }}>Ajouter</Button> : null}
         </>}
       />
+      {insecureCount > 0 ? (
+        <div className="mb-3 flex items-start gap-2 rounded-md border border-warn/50 bg-warn/10 px-3 py-2 text-sm" role="status">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-warn" aria-hidden />
+          <span>
+            {insecureCount} équipement(s) collecté(s) sans vérification TLS/SSH : le mot de passe du compte de service pourrait être intercepté.
+            {isAdmin ? ' Modifiez-les, puis « Lire le certificat » et épinglez son empreinte.' : ''}
+          </span>
+        </div>
+      ) : null}
       <Card bodyClassName="p-0">
         {devices.isLoading ? <Spinner /> : devices.isError ? <ErrorState error={devices.error} onRetry={() => devices.refetch()} /> : !devices.data?.length ? (
           <EmptyState icon={HardDrive} title="Aucun équipement">{isAdmin ? 'Ajoutez un premier équipement pour démarrer la collecte.' : 'Un administrateur doit ajouter les équipements.'}</EmptyState>
         ) : (
           <div className="overflow-x-auto">
             <table className="table-base">
-              <thead><tr><th>Nom</th><th>Type</th><th>Adresse</th><th>Compte</th><th>Collecte</th><th>Dernière collecte</th>{isAdmin ? <th className="w-24" /> : null}</tr></thead>
+              <thead><tr><th>Nom</th><th>Type</th><th>Adresse</th><th>Compte</th><th>Sécurité</th><th>Collecte</th><th>Dernière collecte</th>{isAdmin ? <th className="w-24" /> : null}</tr></thead>
               <tbody>
                 {devices.data.map((d) => (
                   <tr key={d.id} className={d.is_archived ? 'opacity-60' : undefined}>
@@ -162,6 +251,7 @@ export default function Inventory() {
                     <td>{TYPE_LABEL[d.device_type] ?? d.device_type}<p className="text-2xs text-muted">{CATEGORY_LABEL[d.category] ?? d.category}</p></td>
                     <td className="font-mono text-2xs">{d.hostname_ip}:{d.port}</td>
                     <td className="font-mono text-2xs">{d.username}</td>
+                    <td><TlsBadge mode={d.tls_mode} /></td>
                     <td>
                       <StatusBadge status={d.is_archived ? 'ARCHIVED' : !d.is_active ? 'NO_DATA' : d.last_sync_status} label={!d.is_archived && !d.is_active ? 'Suspendue' : undefined} />
                       {d.last_sync_error && !d.is_archived ? <p className="mt-1 max-w-xs truncate text-2xs text-fg-2" title={d.last_sync_error}>{d.last_sync_error}</p> : null}

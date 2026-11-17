@@ -62,7 +62,7 @@ Les numéros S…, C… et I… renvoient à l'audit initial, conservé dans l'h
 | C12 | Migrations idempotentes au démarrage (`app/core/migrations.py`) pour les colonnes ajoutées aux bases existantes. |
 | — | **Pilote PostgreSQL : `psycopg` v3.** SQLAlchemy 2.1 l'utilise par défaut pour les URL `postgresql://` ; avec `psycopg2`, le backend ne démarrait pas. |
 | I14 | Image Python 3.12 construite en deux étapes, sans outils de compilation dans l'image finale. Dépendances figées à la version exacte. |
-| C14 | **43 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
+| C14 | **55 tests automatisés** : authentification, rôles, verrouillage, inventaire, temps réel, planificateur, échappement Flux, exports, analyse capacitaire. |
 | I17 | Fichiers parasites supprimés : scripts ponctuels, `celery.log`, `celerybeat-schedule`, `graphify-out/`. |
 
 ### Latences disque réelles (vCenter)
@@ -79,6 +79,24 @@ La latence était tirée au hasard dans la v2. Elle est maintenant **mesurée** 
 - **Aucune valeur inventée.** Une VM éteinte, un compteur absent ou un échantillon `-1` laissent le champ vide. Si le `PerformanceManager` échoue, le reste de la collecte est conservé et une alerte « Info » le signale.
 - **Prérequis côté vCenter.** Aucun réglage n'est nécessaire. Le compte de service en lecture seule suffit, et les compteurs temps réel sont fournis par les hôtes quel que soit le niveau de statistiques de vCenter. Les requêtes sont regroupées par lots de 50 objets, pour rester sous la limite `config.vpxd.stats.maxQueryMetrics`.
 - **Vérification.** Tests unitaires avec un faux `PerformanceManager` (résolution des compteurs, agrégation, valeurs manquantes, lots, panne, alertes). **Pas encore vérifié contre un vrai vCenter** : à contrôler lors de la recette sur le réseau Orange.
+
+### Vérification TLS / SSH des équipements (S10)
+
+Dans la v2, tous les collecteurs se connectaient sans vérifier le certificat (`verify=False`, `CERT_NONE`, `AutoAddPolicy`). Une interception aurait suffi à voler les mots de passe des comptes de service. La politique est désormais réglée **équipement par équipement** (`app/services/tls.py`) :
+
+| Mode | HTTPS (vCenter, baies, sauvegarde, Scality) | SSH (Veritas Access) |
+|---|---|---|
+| **Vérifié par une AC** (défaut des nouveaux équipements) | chaîne de certificats et nom d'hôte vérifiés, avec les AC du système ou l'AC interne `DEVICE_CA_BUNDLE` | — (pas d'AC en SSH) |
+| **Empreinte épinglée** | seul le certificat dont l'empreinte SHA-256 est enregistrée est accepté. Adapté aux certificats auto-signés et aux accès par IP | empreinte SHA-256 de la clé d'hôte |
+| **Non vérifié** | comportement de la v2, signalé partout | idem |
+
+- **Dans l'inventaire.** Le bouton **« Lire le certificat »** (« Lire la clé SSH » pour Veritas) affiche sujet, émetteur, noms, validité, empreinte, et indique si le certificat serait accepté par une AC. L'administrateur compare l'empreinte avec la console de l'équipement, puis l'épingle en un clic. La lecture est journalisée et n'envoie aucun identifiant.
+- **Signalement.** Une colonne « Sécurité » montre le mode de chaque équipement, et un bandeau compte ceux qui ne sont pas vérifiés.
+- **Mise à jour sans coupure.** Les équipements existants passent en mode **Non vérifié** pour continuer d'être collectés, mais ils sont signalés. Il faut ensuite les épingler un par un (voir la mise en production).
+- **Pour vCenter**, pyVmomi tente d'abord la vérification par AC et ne compare à l'empreinte épinglée qu'en cas d'échec.
+- **Restes.** La détection automatique (sonde sans identifiant) ne vérifie pas le certificat. Les collecteurs n'utilisent plus de proxy système implicite (`trust_env=False`).
+- **Correctif au passage.** Le port proposé pour Veritas Access est 22 (SSH), et non plus 14161.
+- **Tests.** Serveur HTTPS local avec certificat auto-signé : refus en mode AC, acceptation avec l'AC interne, empreinte correcte ou incorrecte, lecture du certificat, clés SSH, règles de l'API.
 
 ### Interface (réécrite de zéro)
 
@@ -123,7 +141,8 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 3. **Construire et pousser les images**, en leur donnant une étiquette de version plutôt que `:latest`.
 4. **Déployer, puis se connecter** avec `admin` et `ADMIN_INITIAL_PASSWORD`. Changer immédiatement ce mot de passe dans « Mon compte », puis vider la variable.
 5. **Créer les comptes nominatifs** des opérateurs dans Paramètres → Utilisateurs.
-6. **Vérifier l'inventaire.** Les équipements dont le mot de passe ne se déchiffre pas sont signalés en erreur : ressaisir leur mot de passe.
+6. **Épingler les certificats.** Après la mise à jour, les équipements existants sont « Non vérifié ». Pour chacun : Modifier → « Lire le certificat » → comparer l'empreinte avec la console de l'équipement → « Épingler cette empreinte ». Pour Veritas, faire de même avec la clé SSH. Si vous avez une AC interne, montez son fichier PEM et renseignez `DEVICE_CA_BUNDLE` pour utiliser le mode « Vérifié par une AC ».
+7. **Vérifier l'inventaire.** Les équipements dont le mot de passe ne se déchiffre pas sont signalés en erreur : ressaisir leur mot de passe.
 
 Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) et la colonne `last_sync_error` sont créées automatiquement au démarrage.
 
@@ -133,11 +152,10 @@ Les tables existantes sont conservées. Les nouvelles (`users`, `audit_events`) 
 
 Par ordre de priorité :
 
-1. **Vérification TLS des équipements** (S10) : autorité de certification interne ou certificat épinglé par équipement, et fichier `known_hosts` pour SSH (Veritas). Aujourd'hui, `verify=False` est toujours utilisé dans les collecteurs.
-2. **Connexion par l'annuaire d'entreprise** (LDAP/AD ou SSO OIDC) pour remplacer les comptes locaux, en gardant les rôles.
-3. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
-4. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
-5. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
-6. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
-7. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
-8. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.
+1. **Connexion par l'annuaire d'entreprise** (LDAP/AD ou SSO OIDC) pour remplacer les comptes locaux, en gardant les rôles.
+2. **Kubernetes** (S6, I13) : TLS sur l'Ingress, PostgreSQL en `StatefulSet` ou en base managée, `NetworkPolicy`, images à version fixe, `ExternalSecrets`.
+3. **Tests des collecteurs sur des réponses réelles enregistrées puis anonymisées**, et validation des unités constructeur par constructeur (Dorado `performancestatistictask`, Unity `currBandwidth` et `currLatency`).
+4. **Déconnexion Unity** (I15) : `POST /api/types/loginSessionInfo/action/logout`.
+5. **Alembic** à la place des migrations au démarrage, dès la prochaine évolution du schéma.
+6. **Nettoyage** : la table `anomalies_saturation` n'est jamais remplie (la saturation est calculée à la volée dans InfluxDB) ; la supprimer.
+7. TimescaleDB à la place d'InfluxDB : seulement si la volumétrie ou les besoins de requêtes le justifient.

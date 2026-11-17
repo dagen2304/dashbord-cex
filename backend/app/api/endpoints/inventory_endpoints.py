@@ -18,8 +18,9 @@ from app.models.inventory import InfrastructureDevice, ServiceDiscovery, SystemS
 from app.models.user import User
 from app.schemas.inventory import (
     DeviceCreate, DeviceDiscoveryInput, DeviceDiscoveryResponse, DeviceResponse, DeviceUpdate,
-    SystemSettingResponse, SystemSettingUpdate,
+    SystemSettingResponse, SystemSettingUpdate, TlsInspectInput,
 )
+from app.services.tls import inspect_ssh, inspect_tls, normalize_fingerprint
 from app.services.settings_service import ensure_defaults
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ VENDOR_METADATA = {
     "DATADOMAIN": {"port": 3009, "category": "BACKUP", "label": "Dell DataDomain"},
     "NETBACKUP": {"port": 1556, "category": "BACKUP", "label": "Veritas NetBackup"},
     "SCALITY": {"port": 443, "category": "OBJECT", "label": "Scality RING"},
-    "VERITAS_ACCESS": {"port": 14161, "category": "STORAGE", "label": "Veritas Access"},
+    "VERITAS_ACCESS": {"port": 22, "category": "STORAGE", "label": "Veritas Access (SSH)"},
 }
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
@@ -57,6 +58,19 @@ def _validate_device_type(device_type: str) -> dict:
     if not meta:
         raise HTTPException(status_code=400, detail=f"Type d'équipement inconnu : {device_type}")
     return meta
+
+
+SSH_TYPES = {"VERITAS_ACCESS"}  # équipements collectés en SSH (clé d'hôte au lieu d'un certificat)
+
+
+def _tls_settings(mode: Optional[str], fingerprint: Optional[str]) -> tuple[str, Optional[str]]:
+    try:
+        fp = normalize_fingerprint(fingerprint)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if mode == "pin" and not fp:
+        raise HTTPException(status_code=400, detail="Le mode « empreinte épinglée » exige l'empreinte SHA-256 du certificat.")
+    return mode or "verify", fp
 
 
 @router.get("/vendors")
@@ -121,6 +135,25 @@ def discover_device_signature(payload: DeviceDiscoveryInput, admin: User = Depen
     )
 
 
+@router.post("/tls/inspect")
+def inspect_device_identity(payload: TlsInspectInput, admin: User = Depends(require_admin),
+                            db: Session = Depends(get_db)):
+    """Lit le certificat TLS (ou la clé d'hôte SSH) présenté par l'équipement, sans s'authentifier,
+    pour que l'administrateur puisse l'épingler après l'avoir comparé à la console constructeur."""
+    host = _validate_host(payload.hostname_ip)
+    _validate_device_type(payload.device_type)
+    audit(db, admin, "device.tls_inspect", f"{host}:{payload.port}")
+    db.commit()
+    try:
+        if payload.device_type in SSH_TYPES:
+            return inspect_ssh(host, payload.port)
+        return inspect_tls(host, payload.port)
+    except (OSError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail=f"Lecture impossible sur {host}:{payload.port} — {type(exc).__name__}: {exc}")
+    except Exception as exc:  # erreurs paramiko / cryptography
+        raise HTTPException(status_code=502, detail=f"Lecture impossible sur {host}:{payload.port} — {type(exc).__name__}: {exc}")
+
+
 # ── CRUD équipements ────────────────────────────────────────────────────────
 @router.get("/devices", response_model=List[DeviceResponse])
 def get_inventory_devices(
@@ -171,6 +204,12 @@ def register_new_device(payload: DeviceCreate, admin: User = Depends(require_adm
     device.port = payload.port
     device.username = payload.username
     device.set_password(payload.password)
+    device.tls_mode, device.tls_fingerprint = _tls_settings(payload.tls_mode, payload.tls_fingerprint)
+    if payload.device_type in SSH_TYPES and device.tls_mode == "verify":
+        # Pas d'autorité de certification en SSH : la vérification passe par l'empreinte de la clé d'hôte.
+        if not device.tls_fingerprint:
+            raise HTTPException(status_code=400, detail="SSH : lisez la clé d'hôte et épinglez son empreinte.")
+        device.tls_mode = "pin"
     device.is_active = True
     device.is_archived = False
     device.last_sync_status = "UNSYNCED"  # aucun statut tant que la première collecte n'a pas eu lieu
@@ -178,7 +217,7 @@ def register_new_device(payload: DeviceCreate, admin: User = Depends(require_adm
     device.last_sync_error = None
     db.flush()
     _sync_discovery(db, device)
-    audit(db, admin, action, f"{device.display_name} ({host})", {"type": device.device_type})
+    audit(db, admin, action, f"{device.display_name} ({host})", {"type": device.device_type, "tls_mode": device.tls_mode})
     db.commit()
     db.refresh(device)
     _poll_soon(device.id)
@@ -204,6 +243,16 @@ def update_device(device_id: str, payload: DeviceUpdate, admin: User = Depends(r
     if "device_type" in changes:
         device.category = _validate_device_type(changes["device_type"])["category"]
 
+    if "tls_mode" in changes or "tls_fingerprint" in changes:
+        mode = changes.pop("tls_mode", None) or device.tls_mode
+        fp = changes.pop("tls_fingerprint") if "tls_fingerprint" in changes else device.tls_fingerprint
+        device.tls_mode, device.tls_fingerprint = _tls_settings(mode, fp)
+        if (changes.get("device_type") or device.device_type) in SSH_TYPES and device.tls_mode == "verify":
+            if not device.tls_fingerprint:
+                raise HTTPException(status_code=400, detail="SSH : lisez la clé d'hôte et épinglez son empreinte.")
+            device.tls_mode = "pin"
+        changes["tls_mode"], changes["tls_fingerprint"] = device.tls_mode, device.tls_fingerprint
+
     for key, value in changes.items():
         setattr(device, key, value)
     if password:
@@ -213,7 +262,7 @@ def update_device(device_id: str, payload: DeviceUpdate, admin: User = Depends(r
           {**{k: v for k, v in changes.items()}, **({"password": "changed"} if password else {})})
     db.commit()
     db.refresh(device)
-    if password or {"hostname_ip", "port", "username", "device_type", "is_active"} & changes.keys():
+    if password or {"hostname_ip", "port", "username", "device_type", "is_active", "tls_mode", "tls_fingerprint"} & changes.keys():
         _poll_soon(device.id)
     return device
 

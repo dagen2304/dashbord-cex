@@ -41,6 +41,12 @@ class InfrastructureDevice(Base):
     last_sync_at = Column(DateTime, nullable=True)     # Horodatage du dernier cycle de polling
     last_sync_error = Column(String, nullable=True)    # Dernière erreur de collecte (affichée dans l'inventaire)
 
+    # Vérification de la connexion (voir app/services/tls.py) : verify | pin | insecure.
+    # Nouveaux équipements : « verify ». Équipements existants avant la v3 : « insecure » (migration),
+    # signalés dans l'interface jusqu'à ce qu'un administrateur épingle leur empreinte.
+    tls_mode = Column(String, nullable=False, default="verify")
+    tls_fingerprint = Column(String, nullable=True)  # SHA-256 du certificat (ou de la clé d'hôte SSH)
+
     # Relations de liaison
     discovery_record = relationship("ServiceDiscovery", back_populates="device", uselist=False, cascade="all, delete-orphan")
     metrics_history = relationship("MetricHistory", back_populates="device", cascade="all, delete-orphan")

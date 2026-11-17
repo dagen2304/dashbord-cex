@@ -18,6 +18,8 @@ x-backend-env: &backend-env
   SMTP_PASSWORD: ${SMTP_PASSWORD:-}
   CORS_ORIGINS: ${CORS_ORIGINS:-}
   DEMO_DATA: ${DEMO_DATA:-false}
+  # AC interne des équipements (fichier PEM monté dans les conteneurs), ex. /certs/ac-interne.pem
+  DEVICE_CA_BUNDLE: ${DEVICE_CA_BUNDLE:-}
   TZ: Africa/Douala
 
 x-backend-deps: &backend-deps

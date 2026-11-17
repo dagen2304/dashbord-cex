@@ -1,12 +1,10 @@
 import logging
 import requests
-import urllib3
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
 from app.services.base_collector import BaseCollector
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -44,8 +42,7 @@ class NetBackupCollector(BaseCollector):
         api_key = self.config.get("api_key", "")  # Alternative: API Key
         base_url = f"https://{host}:{port}/netbackup"
 
-        session = requests.Session()
-        session.verify = False
+        session = self.http_session()  # politique TLS de l'équipement (verify / pin / insecure)
         session.headers.update({
             "Content-Type": "application/vnd.netbackup+json; version=4.0",
             "Accept": "application/vnd.netbackup+json; version=4.0",

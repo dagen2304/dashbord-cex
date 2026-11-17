@@ -1,11 +1,9 @@
 import logging
 import requests
-import urllib3
 from typing import Dict, Any
 
 from app.services.base_collector import BaseCollector
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -46,8 +44,7 @@ class ScalityCollector(BaseCollector):
         else:
             host_port = f"{host}:{port}"
 
-        session = requests.Session()
-        session.verify = False
+        session = self.http_session()  # politique TLS de l'équipement (verify / pin / insecure)
         if user and password:
             session.auth = (user, password)
             

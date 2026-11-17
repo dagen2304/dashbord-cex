@@ -1,12 +1,10 @@
 import logging
 import requests
-import urllib3
 import json
 from typing import Dict, Any, Optional
 
 from app.services.base_collector import BaseCollector
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -53,8 +51,7 @@ class DoradoCollector(BaseCollector):
         password = self.config.get("password", "")
         base_url = f"https://{host}:{port}/deviceManager/rest"
 
-        session = requests.Session()
-        session.verify = False
+        session = self.http_session()  # politique TLS de l'équipement (verify / pin / insecure)
         device_id = None
         ibase_token = None
 

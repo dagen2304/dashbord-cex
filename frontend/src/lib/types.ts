@@ -55,6 +55,25 @@ export interface Device {
   last_sync_status: string
   last_sync_at: string | null
   last_sync_error: string | null
+  tls_mode: TlsMode
+  tls_fingerprint: string | null
+}
+
+export type TlsMode = 'verify' | 'pin' | 'insecure'
+
+export interface TlsInspection {
+  kind: 'tls' | 'ssh'
+  sha256: string
+  trusted: boolean
+  trust_error: string | null
+  subject?: string
+  issuer?: string
+  self_signed?: boolean
+  subject_alt_names?: string[]
+  not_before?: string
+  not_after?: string
+  expired?: boolean
+  key_type?: string
 }
 
 export interface Vendor {

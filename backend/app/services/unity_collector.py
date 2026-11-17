@@ -1,11 +1,9 @@
 import logging
 import requests
-import urllib3
 from typing import Dict, Any
 
 from app.services.base_collector import BaseCollector
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -51,8 +49,7 @@ class UnityCollector(BaseCollector):
         password = self.config.get("password", "")
         base_url = f"https://{host}:{port}/api"
 
-        session = requests.Session()
-        session.verify = False
+        session = self.http_session()  # politique TLS de l'équipement (verify / pin / insecure)
         session.auth = (user, password)
         session.headers.update({
             "X-EMC-REST-CLIENT": "true",
