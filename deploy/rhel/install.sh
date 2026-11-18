@@ -14,6 +14,7 @@ set -euo pipefail
 KIT=$(cd "$(dirname "$0")/../.." && pwd)
 # shellcheck source=deploy/rhel/lib.sh
 source "$KIT/deploy/rhel/lib.sh"
+enable_error_trap
 
 RENEW_TLS=false
 [[ ${1:-} == --renew-tls ]] && RENEW_TLS=true

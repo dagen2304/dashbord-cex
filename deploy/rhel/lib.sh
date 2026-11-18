@@ -29,8 +29,13 @@ require_podman() {
 
 # Secret aléatoire alphanumérique (sans caractère spécial : utilisable dans une URL).
 random_secret() {
-    local len=${1:-48}
-    LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c "$len"
+    # Sans « tr </dev/urandom | head » : head ferme le tube, tr reçoit SIGPIPE (code 141)
+    # et, avec « set -o pipefail », le script appelant s'arrêtait sans message.
+    local len=${1:-48} out=""
+    while (( ${#out} < len )); do
+        out+=$(head -c 512 /dev/urandom | LC_ALL=C tr -dc 'A-Za-z0-9')
+    done
+    printf '%s' "${out:0:len}"
 }
 
 secret_exists() { podman secret inspect "$1" >/dev/null 2>&1; }
@@ -61,3 +66,12 @@ wait_healthy() {
 current_version() {
     podman image inspect -f '{{index .Labels "noc.version"}}' localhost/noc-backend:current 2>/dev/null || true
 }
+
+# Arrêt sur erreur toujours expliqué (sinon « set -e » quitte sans aucun message).
+on_error() {
+    local code=$? line=${BASH_LINENO[0]} cmd=$BASH_COMMAND
+    printf '\033[1;31m[ERR]\033[0m Arrêt inattendu (code %s) à la ligne %s de %s : %s\n' \
+        "$code" "$line" "$(basename "${BASH_SOURCE[1]:-$0}")" "$cmd" >&2
+    exit "$code"
+}
+enable_error_trap() { set -E; trap on_error ERR; }

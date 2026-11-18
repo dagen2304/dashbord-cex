@@ -11,6 +11,7 @@
 set -euo pipefail
 # shellcheck source=deploy/rhel/lib.sh
 source "$(dirname "$0")/lib.sh"
+enable_error_trap
 require_root
 
 RETENTION=${NOC_BACKUP_RETENTION_DAYS:-14}

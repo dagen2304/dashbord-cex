@@ -5,6 +5,7 @@
 set -euo pipefail
 # shellcheck source=deploy/rhel/lib.sh
 source "$(dirname "$0")/lib.sh"
+enable_error_trap
 require_root
 
 for img in "${NOC_IMAGES[@]}"; do
