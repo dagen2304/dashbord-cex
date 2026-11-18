@@ -21,7 +21,9 @@ utilisateurs ──443──> noc-frontend (nginx, TLS) ──> noc-backend (API
 
 ## 1. Prérequis
 
-**Serveur.** RHEL **9.2 ou plus** (recommandé), ou RHEL 8.8 ou plus, avec Podman 4.4 minimum (`dnf install -y podman`). L'installation a été validée avec Podman 4.9, la version livrée avec RHEL 9.4.
+**Serveur.** RHEL **9.2 ou plus** (recommandé), ou RHEL 8.8 ou plus, avec Podman 4.4 minimum (`dnf install -y podman`).
+
+> **Docker CE et Podman ne peuvent pas cohabiter sur RHEL 8** : le paquet `containerd.io` de Docker remplace `runc`, dont Podman a besoin, et `dnf install podman` échoue. Sur un serveur dédié au NOC, retirez d'abord Docker avec `dnf remove docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin`. N'utilisez **jamais** `--allowerasing` sur un nœud Kubernetes, où `containerd` fait tourner le cluster. L'installation a été validée avec Podman 4.9, la version livrée avec RHEL 9.4.
 
 | Ressource | Minimum | Recommandé |
 |---|---|---|

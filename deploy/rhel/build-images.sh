@@ -39,6 +39,10 @@ fail() { printf '\033[1;31m[ERR]\033[0m %s\n' "$*" >&2; exit 1; }
 [[ $VERSION =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][A-Za-z0-9]+)?$ ]] || fail "Version invalide : $VERSION"
 command -v "$ENGINE" >/dev/null || fail "Moteur « $ENGINE » introuvable (installez podman : dnf install -y podman)."
 step "Construction de NOC INFRA $VERSION avec $ENGINE ($("$ENGINE" --version 2>/dev/null | head -1))"
+# Un démon docker/containerd bloqué fait attendre « docker build » indéfiniment, sans message.
+if ! timeout 20 "$ENGINE" info >/dev/null 2>&1; then
+    fail "Le moteur « $ENGINE » ne répond pas (vérifiez : systemctl status docker containerd ; journalctl -u containerd -n 30)."
+fi
 [[ -d $ROOT/deploy/rhel && -f $ROOT/backend/Dockerfile ]] || fail "Lancez le script depuis la branche de la refonte (dossier deploy/rhel absent)."
 
 # Arguments de proxy transmis aux constructions (pip et npm s'exécutent DANS la construction).
