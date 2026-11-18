@@ -28,6 +28,9 @@ DEVICE_FIELDS = {
     "capacity_used_tb", "capacity_total_tb", "dedup_ratio", "active_streams", "backup_success_rate",
     "jobs_failed", "jobs_active", "iops_s3", "active_nodes", "data_reduction_ratio",
     "nfs_shares_active", "cifs_shares_active",
+    # vRealize Operations
+    "clusters_total", "alerts_critical", "alerts_immediate", "alerts_warning",
+    "vms_oversized", "vms_undersized", "vms_idle", "capacity_time_remaining_days",
 }
 VM_FIELDS = {"cpu_usage_pct", "ram_usage_pct", "storage_gb", "read_latency_ms", "write_latency_ms"}
 DS_FIELDS = {"usage_pct", "read_latency_ms", "write_latency_ms"}

@@ -1,6 +1,6 @@
 from app.core.redis_client import r_client
 from app.models.application import Application
-from app.models.inventory import InfrastructureDevice, MetricHistory
+from app.models.inventory import InfrastructureDevice, MetricHistory, ServiceDiscovery
 from app.tasks import scheduler
 from app.tasks.celery_app import celery_app
 
@@ -42,3 +42,21 @@ def test_dispatcher_never_collects_demo_devices(client, admin_headers, db, monke
     r_client.flushall()
     scheduler.dispatch_polling()
     assert queued == []
+
+
+def test_demo_vrops_device_and_upgrade_of_existing_demo(client, admin_headers, db):
+    from app.demo.tasks import DEVICES, refresh_demo_data
+
+    refresh_demo_data()
+    vrops = db.query(InfrastructureDevice).filter(InfrastructureDevice.device_type == "VROPS").one()
+    detail = client.get(f"/api/metrics/devices/{vrops.id}", headers=admin_headers).json()
+    assert detail["clusters_metrics"] and detail["vrops_datastores"] and detail["rightsizing"]
+    assert detail["metrics"]["capacity_time_remaining_days"] > 0
+
+    # Démo créée par une version qui ne connaissait pas vROps : l'équipement est ajouté au passage suivant.
+    db.delete(db.query(ServiceDiscovery).filter(ServiceDiscovery.device_id == vrops.id).one())
+    db.delete(vrops)
+    db.commit()
+    refresh_demo_data()
+    db.expire_all()
+    assert db.query(InfrastructureDevice).count() == len(DEVICES)

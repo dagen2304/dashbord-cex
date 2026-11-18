@@ -61,6 +61,7 @@ export const TYPE_LABEL: Record<string, string> = {
   NETBACKUP: 'NetBackup',
   SCALITY: 'Scality RING',
   VERITAS_ACCESS: 'Veritas Access',
+  VROPS: 'vRealize Operations',
 }
 
 /** Libellé et unité des métriques connues. */
@@ -91,6 +92,14 @@ export const METRIC_META: Record<string, { label: string; unit?: string; digits?
   data_reduction_ratio: { label: 'Réduction', unit: '×' },
   nfs_shares_active: { label: 'Partages NFS', digits: 0 },
   cifs_shares_active: { label: 'Partages CIFS', digits: 0 },
+  clusters_total: { label: 'Clusters', digits: 0 },
+  alerts_critical: { label: 'Alertes critiques', digits: 0 },
+  alerts_immediate: { label: 'Alertes immédiates', digits: 0 },
+  alerts_warning: { label: 'Avertissements', digits: 0 },
+  vms_oversized: { label: 'VMs surdimensionnées', digits: 0 },
+  vms_undersized: { label: 'VMs sous-dimensionnées', digits: 0 },
+  vms_idle: { label: 'VMs inactives', digits: 0 },
+  capacity_time_remaining_days: { label: 'Avant saturation', unit: 'j', digits: 0 },
 }
 
 export function metricLabel(field: string): string {
@@ -107,6 +116,7 @@ export function keyMetrics(category: string, type: string): string[] {
   if (type === 'NETBACKUP') return ['backup_success_rate', 'jobs_failed', 'jobs_active']
   if (type === 'DATADOMAIN') return ['capacity_usage_pct', 'dedup_ratio', 'active_streams']
   if (type === 'SCALITY') return ['capacity_usage_pct', 'iops_s3', 'active_nodes']
+  if (type === 'VROPS') return ['alerts_critical', 'capacity_time_remaining_days', 'vms_oversized']
   if (type === 'VERITAS_ACCESS') return ['capacity_usage_pct', 'nfs_shares_active', 'cifs_shares_active']
   if (category === 'VIRTUALIZATION') return ['cpu_usage_pct', 'ram_usage_pct', 'datastores_usage_pct']
   return ['capacity_usage_pct', 'iops', 'latency_ms']

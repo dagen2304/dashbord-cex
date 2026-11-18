@@ -41,6 +41,22 @@ export interface DeviceState {
   sparkline?: { field: string; points: SeriesPoint[] }
   hosts_metrics?: Array<{ host_name: string; cluster: string; status: string; cpu_usage_pct: number; ram_usage_pct: number }>
   datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number; read_latency_ms?: number; write_latency_ms?: number }>
+  /** vRealize Operations : champ absent = valeur non fournie par vROps. */
+  clusters_metrics?: VropsCluster[]
+  vrops_datastores?: Array<{ name: string; capacity_tb?: number; used_tb?: number; usage_pct?: number; time_remaining_days?: number; health?: number }>
+  rightsizing?: Array<{ vm_name: string; kind: 'oversized' | 'undersized' | 'idle'; vcpus?: number; memory_gb?: number }>
+}
+
+export interface VropsCluster {
+  name: string
+  cpu_usage_pct?: number
+  ram_usage_pct?: number
+  time_remaining_days?: number
+  capacity_remaining_pct?: number
+  health?: number
+  risk?: number
+  efficiency?: number
+  running_vms?: number
 }
 
 export interface Device {

@@ -17,6 +17,7 @@ from app.core.database import get_db
 from app.core.influx import DEVICE_FIELDS, OBJECT_TYPES, get_influx
 from app.core.redis_client import LATEST_KEY, r_client
 from app.models.inventory import InfrastructureDevice
+from app.services.collectors import effective_interval
 from app.services.settings_service import get_polling_interval
 
 logger = logging.getLogger(__name__)
@@ -29,10 +30,12 @@ SPARKLINE_FIELD = {
     "BACKUP": "capacity_usage_pct",
     "OBJECT": "capacity_usage_pct",
 }
-SPARKLINE_FIELD_BY_TYPE = {"NETBACKUP": "backup_success_rate", "VERITAS_ACCESS": "capacity_usage_pct"}
+SPARKLINE_FIELD_BY_TYPE = {"NETBACKUP": "backup_success_rate", "VERITAS_ACCESS": "capacity_usage_pct",
+                           "VROPS": "alerts_critical"}
 
 # Détails volumineux exclus de la vue d'ensemble (disponibles via /devices/{id}).
-_HEAVY_KEYS = ("vms_metrics", "vms_fs_metrics", "hosts_metrics", "datastores_metrics")
+_HEAVY_KEYS = ("vms_metrics", "vms_fs_metrics", "hosts_metrics", "datastores_metrics",
+               "clusters_metrics", "vrops_datastores", "rightsizing")
 
 
 def _parse_ts(value: Optional[str]) -> Optional[datetime]:
@@ -58,7 +61,7 @@ def _load_states(devices: List[InfrastructureDevice]) -> Dict[str, Optional[dict
     return out
 
 
-def _device_view(dev: InfrastructureDevice, payload: Optional[dict], stale_after_s: int, full: bool) -> Dict[str, Any]:
+def _device_view(dev: InfrastructureDevice, payload: Optional[dict], interval_s: int, full: bool) -> Dict[str, Any]:
     collected_at = _parse_ts(payload.get("collected_at") or payload.get("timestamp")) if payload else None
     age_s = (datetime.now(timezone.utc) - collected_at).total_seconds() if collected_at else None
     view: Dict[str, Any] = {
@@ -71,7 +74,7 @@ def _device_view(dev: InfrastructureDevice, payload: Optional[dict], stale_after
         "last_sync_status": dev.last_sync_status,
         "last_sync_error": dev.last_sync_error,
         "collected_at": collected_at.isoformat() if collected_at else None,
-        "stale": age_s is None or age_s > stale_after_s,
+        "stale": age_s is None or age_s > effective_interval(dev.device_type, interval_s) * 3,  # 3 cycles manqués
         "status": (payload or {}).get("status", "NO_DATA") if payload else "NO_DATA",
         "metrics": (payload or {}).get("metrics", {}),
         "alerts": (payload or {}).get("alerts", []),
@@ -96,7 +99,7 @@ def get_realtime_metrics(
         .order_by(InfrastructureDevice.category, InfrastructureDevice.display_name)
         .all()
     )
-    stale_after = get_polling_interval(db) * 3
+    interval = get_polling_interval(db)
     try:
         states = _load_states(devices)
     except Exception as exc:
@@ -106,7 +109,7 @@ def get_realtime_metrics(
     influx = get_influx() if with_sparkline else None
     result = []
     for dev in devices:
-        view = _device_view(dev, states.get(dev.id), stale_after, full=False)
+        view = _device_view(dev, states.get(dev.id), interval, full=False)
         if influx is not None:
             field = SPARKLINE_FIELD_BY_TYPE.get(dev.device_type) or SPARKLINE_FIELD.get(dev.category, "cpu_usage_pct")
             view["sparkline"] = {"field": field, "points": influx.get_metric_history(dev.id, field, hours=6, points=36)}
@@ -122,7 +125,7 @@ def get_device_detail(device_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Équipement introuvable.")
     blob = r_client.get(LATEST_KEY.format(device_id=dev.id))
     payload = json.loads(blob) if blob else None
-    return _device_view(dev, payload, get_polling_interval(db) * 3, full=True)
+    return _device_view(dev, payload, get_polling_interval(db), full=True)
 
 
 @router.get("/devices/{device_id}/history")

@@ -6,6 +6,7 @@ import { api } from '@/lib/api'
 import { CATEGORY_LABEL, METRIC_META, TYPE_LABEL, dateTime, isDemoHost, fmt, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
 import type { DeviceState, SeriesPoint } from '@/lib/types'
 import { TimeSeriesChart } from '@/components/charts'
+import { VropsSections } from '@/components/VropsSections'
 import { Card, DemoBadge, EmptyState, ErrorState, FilterField, PageHeader, Segmented, Select, Spinner, StatusBadge, UsageBar } from '@/components/ui'
 
 const RANGES = [
@@ -105,6 +106,7 @@ export default function DeviceDetail() {
                 data={hist.data.points}
                 series={[{ key: 'value', label: activeField ? metricLabel(activeField) : '' }]}
                 unit={unit}
+                digits={activeField ? METRIC_META[activeField]?.digits ?? 1 : 1}
                 spanHours={hours}
                 yMax={unit === '%' ? 100 : undefined}
                 thresholds={unit === '%' ? [{ value: 90, label: 'Critique 90 %', tone: 'crit' }, { value: 80, label: 'Attention 80 %', tone: 'warn' }] : []}
@@ -114,6 +116,8 @@ export default function DeviceDetail() {
           </Card>
         </>
       )}
+
+      {d.device_type === 'VROPS' && d.status !== 'NO_DATA' ? <VropsSections d={d} /> : null}
 
       {d.hosts_metrics?.length ? (
         <Card className="mb-4" title={`Hôtes ESXi (${d.hosts_metrics.length})`} bodyClassName="p-0">

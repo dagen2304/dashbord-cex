@@ -35,6 +35,7 @@ VENDOR_METADATA = {
     "NETBACKUP": {"port": 1556, "category": "BACKUP", "label": "Veritas NetBackup"},
     "SCALITY": {"port": 443, "category": "OBJECT", "label": "Scality RING"},
     "VERITAS_ACCESS": {"port": 22, "category": "STORAGE", "label": "Veritas Access (SSH)"},
+    "VROPS": {"port": 443, "category": "VIRTUALIZATION", "label": "VMware vRealize Operations"},
 }
 
 _HOST_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$")
@@ -117,6 +118,10 @@ def discover_device_signature(payload: DeviceDiscoveryInput, admin: User = Depen
         res = _http_probe(f"https://{host}/sdk/vimServiceVersions.xml")
         if res is not None and res.status_code == 200 and "urn:vim25" in res.text:
             return DeviceDiscoveryResponse(detected_type="VCENTER", recommended_port=443, category="VIRTUALIZATION", status="DETECTED")
+        # vROps : état du nœud, seule ressource de la Suite API accessible sans authentification.
+        res = _http_probe(f"https://{host}/suite-api/api/deployment/node/status")
+        if res is not None and res.status_code == 200 and '"status"' in res.text:
+            return DeviceDiscoveryResponse(detected_type="VROPS", recommended_port=443, category="VIRTUALIZATION", status="DETECTED")
         res = _http_probe(f"https://{host}/api/types/basicSystemInfo/instances")
         if res is not None and res.status_code == 200 and "basicSystemInfo" in res.text:
             return DeviceDiscoveryResponse(detected_type="DELL_UNITY", recommended_port=443, category="STORAGE", status="DETECTED")

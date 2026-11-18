@@ -75,7 +75,8 @@ export function TimeSeriesChart({ data, series, unit, digits = 1, height = 260, 
             axisLine={false}
             width={48}
             domain={[0, yMax ?? 'auto']}
-            tickFormatter={(v: number) => fmt(v, 0)}
+            allowDecimals={digits > 0}
+            tickFormatter={(v: number) => fmt(v, Number.isInteger(v) ? 0 : 1)}
             unit={unit === '%' ? '%' : undefined}
           />
           <Tooltip

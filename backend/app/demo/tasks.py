@@ -30,6 +30,7 @@ DEVICES = [
     ("NetBackup Primary", "nbu-primary", "NETBACKUP", "BACKUP", 1556),
     ("Scality RING S3", "ring", "SCALITY", "OBJECT", 443),
     ("Veritas Access NAS", "vaccess", "VERITAS_ACCESS", "STORAGE", 14161),
+    ("vRealize Operations", "vrops", "VROPS", "VIRTUALIZATION", 443),
 ]
 START_KEY = "noc_demo_start"
 APPS = ["sap", "crm", "web", "db", "k8s"]
@@ -175,25 +176,82 @@ def _storage_payload(dtype: str, t: float, days: float) -> Dict[str, Any]:
     return {"device_type": category, "status": status, "metrics": m, "alerts": alerts}
 
 
+def _vrops_payload(t: float, days: float) -> Dict[str, Any]:
+    """Même structure que VRopsCollector : clusters, datastores, rightsizing, alertes vROps."""
+    clusters = []
+    for i, (name, base, vms) in enumerate([("CL-PROD-01", 64, 14), ("CL-PROD-02", 71, 14), ("CL-PRA-01", 28, 6), ("CL-PRA-02", 33, 6)]):
+        cpu = round(base * 0.7 + 6 * _wave(t, 90, i), 1)
+        ram = round(base + 4 * _wave(t, 240, i), 1)
+        remaining = max(5.0, round((140 if i < 2 else 400) - 40 * i - days, 1))
+        clusters.append({"name": name, "cpu_usage_pct": cpu, "ram_usage_pct": ram, "time_remaining_days": remaining,
+                         "capacity_remaining_pct": round(100 - ram, 0), "health": [100, 75, 100, 100][i],
+                         "risk": [25, 50, 0, 25][i], "efficiency": [50, 25, 75, 75][i], "running_vms": vms})
+    datastores = []
+    for i, (name, cap, used) in enumerate([("DS-PROD-01", 20.0, 17.4), ("DS-PROD-02", 20.0, 13.1),
+                                           ("DS-PRA-01", 12.0, 5.2), ("DS-PRA-02", 12.0, 4.4)]):
+        used = round(used + 0.05 * days, 2)
+        datastores.append({"name": name, "capacity_tb": cap, "used_tb": used, "usage_pct": round(used / cap * 100, 1),
+                           "time_remaining_days": max(3.0, round([24, 160, 420, 500][i] - days, 1))})
+    datastores.sort(key=lambda d: d["usage_pct"], reverse=True)
+    rightsizing = (
+        [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "oversized", "vcpus": 2 + i % 3 * 2, "memory_gb": float(8 + i % 4 * 8)} for i in (1, 4, 7, 9, 12, 15, 21)]
+        + [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "undersized", "vcpus": 2, "memory_gb": 4.0} for i in (3, 18)]
+        + [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "idle"} for i in (30, 33, 37)]
+    )
+    min_days = min(r["time_remaining_days"] for r in clusters + datastores)
+    alerts = [
+        {"severity": "CRITICAL", "component": "esx-prod-07", "message": "Host has lost redundant connectivity to a dvPort"},
+        {"severity": "WARNING", "component": "DS-PROD-01", "message": "Datastore is running out of disk space (immédiate)"},
+        {"severity": "WARNING", "component": "vm-sap-01", "message": "Virtual machine has CPU contention caused by co-stop"},
+        {"severity": "WARNING", "component": "CL-PROD-02", "message": "Cluster has memory contention caused by overcommit"},
+    ]
+    if min_days < 30:
+        alerts.insert(0, {"severity": "WARNING", "component": "Capacité", "message": f"Saturation prévue par vROps dans {min_days:g} jour(s)"})
+    metrics = {
+        "clusters_total": 4, "hosts_total": 16, "vms_total": 40,
+        "alerts_critical": 1, "alerts_immediate": 1, "alerts_warning": 2,
+        "vms_oversized": 7, "vms_undersized": 2, "vms_idle": 3,
+        "capacity_time_remaining_days": min_days,
+        "datastores_usage_pct": round(sum(d["used_tb"] for d in datastores) / sum(d["capacity_tb"] for d in datastores) * 100, 1),
+    }
+    return {"device_type": "operations", "status": "WARNING", "metrics": metrics, "alerts": alerts,
+            "clusters_metrics": clusters, "vrops_datastores": datastores, "rightsizing": rightsizing}
+
+
 def _payload(dev: InfrastructureDevice, t: float, days: float) -> Dict[str, Any]:
+    if dev.device_type == "VROPS":
+        return _vrops_payload(t, days)
     if dev.device_type == "VCENTER":
         return _vcenter_payload(dev.display_name, dev.hostname_ip, dev.hostname_ip.startswith("vcsa-prod"), t)
     return _storage_payload(dev.device_type, t, days)
 
 
 # ── Initialisation (une seule fois) ─────────────────────────────────────────
+def _create_device(db, name: str, short: str, dtype: str, category: str, port: int) -> InfrastructureDevice:
+    dev = InfrastructureDevice(display_name=name, hostname_ip=_host(short), device_type=dtype, category=category,
+                               port=port, username="svc_demo_ro", is_active=True, last_sync_status="UNSYNCED")
+    dev.set_password("demo")
+    db.add(dev)
+    db.flush()
+    # Inscrit mais inactif dans le Service Discovery : le répartiteur réel ne le collecte jamais.
+    db.add(ServiceDiscovery(device_id=dev.id, is_active=False))
+    return dev
+
+
+def _add_new_devices(db, existing: List[InfrastructureDevice]) -> None:
+    """Démo déjà initialisée par une version antérieure : ajoute seulement les nouveaux types."""
+    known = {d.hostname_ip for d in existing}
+    added = [_create_device(db, *spec) for spec in DEVICES if _host(spec[1]) not in known]
+    if added:
+        db.commit()
+        logger.info("Démo : %d équipement(s) ajouté(s) (%s).", len(added), ", ".join(d.display_name for d in added))
+
+
 def _seed(db) -> None:
     now = datetime.now(timezone.utc)
     devices = []
-    for name, short, dtype, category, port in DEVICES:
-        dev = InfrastructureDevice(display_name=name, hostname_ip=_host(short), device_type=dtype, category=category,
-                                   port=port, username="svc_demo_ro", is_active=True, last_sync_status="UNSYNCED")
-        dev.set_password("demo")
-        db.add(dev)
-        db.flush()
-        # Inscrit mais inactif dans le Service Discovery : le répartiteur réel ne le collecte jamais.
-        db.add(ServiceDiscovery(device_id=dev.id, is_active=False))
-        devices.append(dev)
+    for spec in DEVICES:
+        devices.append(_create_device(db, *spec))
     db.commit()
 
     # 45 jours d'historique capacitaire (1 point toutes les 6 h) et 24 h de séries temporelles.
@@ -265,7 +323,9 @@ def refresh_demo_data() -> int:
         demo = db.query(InfrastructureDevice).filter(InfrastructureDevice.hostname_ip.like(f"%{DEMO_SUFFIX}")).all()
         if not demo:
             _seed(db)
-            demo = db.query(InfrastructureDevice).filter(InfrastructureDevice.hostname_ip.like(f"%{DEMO_SUFFIX}")).all()
+        else:
+            _add_new_devices(db, demo)
+        demo = db.query(InfrastructureDevice).filter(InfrastructureDevice.hostname_ip.like(f"%{DEMO_SUFFIX}")).all()
 
     now = datetime.now(timezone.utc)
     # Date de début de la démo : sert à faire croître les capacités de façon continue.

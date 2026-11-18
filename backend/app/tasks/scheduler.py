@@ -26,7 +26,7 @@ from app.core.smtp import send_latency_alert_email
 from app.demo import DEMO_SUFFIX
 from app.models.application import VM
 from app.models.inventory import InfrastructureDevice, LatencyAnomaly, MetricHistory, PasswordDecryptionError, ServiceDiscovery
-from app.services.collectors import COLLECTOR_REGISTRY
+from app.services.collectors import COLLECTOR_REGISTRY, effective_interval
 from app.services.settings_service import get_polling_interval, get_setting
 from app.tasks.celery_app import celery_app
 
@@ -40,8 +40,8 @@ HISTORY_EVERY_S = 3600  # un point d'historique capacitaire SQL par heure et par
 def dispatch_polling() -> int:
     with SessionLocal() as db:
         interval = get_polling_interval(db)
-        device_ids = [
-            d.id for d in db.query(InfrastructureDevice)
+        devices = [
+            (d.id, d.device_type) for d in db.query(InfrastructureDevice)
             .join(ServiceDiscovery, ServiceDiscovery.device_id == InfrastructureDevice.id)
             .filter(ServiceDiscovery.is_active.is_(True),
                     InfrastructureDevice.is_active.is_(True),
@@ -53,15 +53,16 @@ def dispatch_polling() -> int:
             .filter(InfrastructureDevice.hostname_ip.like(f"%{DEMO_SUFFIX}")).all()
         }
     queued = 0
-    for device_id in device_ids:
+    for device_id, device_type in devices:
         if device_id in demo_ids:
             continue  # équipement fictif du mode démo : jamais de vraie collecte
         # SET NX : vrai seulement si aucune collecte n'est prévue pour cet équipement.
-        if r_client.set(NEXT_POLL_KEY.format(device_id=device_id), "1", nx=True, ex=interval):
+        if r_client.set(NEXT_POLL_KEY.format(device_id=device_id), "1", nx=True,
+                        ex=effective_interval(device_type, interval)):
             collect_device.delay(device_id)
             queued += 1
     if queued:
-        logger.info("Répartiteur : %d collecte(s) lancée(s) sur %d équipement(s).", queued, len(device_ids))
+        logger.info("Répartiteur : %d collecte(s) lancée(s) sur %d équipement(s).", queued, len(devices))
     return queued
 
 
@@ -102,7 +103,8 @@ def _collect(device_id: str) -> None:
             "username": device.username, "password": password,
             "tls_mode": device.tls_mode, "tls_fingerprint": device.tls_fingerprint,
         }
-        name, dtype, interval = device.display_name, device.device_type, get_polling_interval(db)
+        name, dtype = device.display_name, device.device_type
+        interval = effective_interval(dtype, get_polling_interval(db))
 
     collector = collector_class(device_id, name, config)
     try:

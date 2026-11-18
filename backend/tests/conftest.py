@@ -40,6 +40,10 @@ from fastapi.testclient import TestClient  # noqa: E402
 from app.core.database import Base, SessionLocal, engine  # noqa: E402
 from app.core.redis_client import r_client  # noqa: E402
 from main import app  # noqa: E402
+from app.tasks.celery_app import celery_app  # noqa: E402
+
+# Tâches publiées pendant les tests : transport en mémoire, aucun courtier réseau.
+celery_app.conf.broker_url = "memory://"
 
 ADMIN = ("admin", "Admin-Passw0rd!")
 

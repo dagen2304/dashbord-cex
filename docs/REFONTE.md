@@ -163,6 +163,20 @@ Désormais, comme le prévoit le guide de l'API REST Unisphere :
 
 **Vérification.** 4 tests sur un faux Unisphere : cookie, absence d'identifiants, CSRF, corps de la déconnexion, collecte en échec, connexion refusée, déconnexion refusée. **À confirmer sur une vraie baie** : le compteur de sessions de l'utilisateur de service doit rester stable dans Unisphere.
 
+### vRealize Operations 8.x (Aria Operations)
+
+Nouveau type d'équipement **« VMware vRealize Operations »** (`VROPS`), collecté par la Suite API REST en lecture seule (`backend/app/services/vrops_collector.py`). Écrit pour la version 8.10.2 en service.
+
+- **Rôle** : vROps complète la collecte vCenter, il ne la remplace pas. vCenter reste la source du temps réel (latences toutes les 20 s, état des hôtes). vROps apporte l'analyse : capacité restante et jours avant saturation, scores santé / risque / efficacité par cluster, VMs surdimensionnées, sous-dimensionnées ou inactives, alertes vROps.
+- **Session** : jeton obtenu par `POST /suite-api/api/auth/token/acquire`, envoyé dans `Authorization: vRealizeOpsToken …`, puis libéré (`/auth/token/release`) en fin de cycle, même en cas d'échec.
+- **Compte** : rôle ReadOnly. Pour un compte d'annuaire déclaré dans vROps, saisir `SOURCE\utilisateur` (`SOURCE` = nom de la source d'authentification dans vROps).
+- **Fréquence** : vROps recalcule toutes les 5 minutes ; le répartiteur applique donc 5 minutes minimum à ce type, quel que soit l'intervalle global.
+- **Volume** : lecture des dernières valeurs en lot (500 objets par requête), pagination sur `totalCount`. Seule une liste de métriques utiles est collectée (`CLUSTER_KEYS`, `DATASTORE_KEYS`, `VM_KEYS`).
+- **Aucune valeur inventée** : une métrique que vROps ne renvoie pas reste vide, et la liste des clés absentes est signalée par une alerte « INFO » sur l'équipement. C'est le premier point à contrôler sur le vrai vROps : si une clé est nommée autrement dans votre version, il suffit de la corriger dans ces listes.
+- **Écran** : la fiche de l'équipement affiche les clusters, les datastores selon vROps et les recommandations de redimensionnement (filtrables). Les alertes vROps critiques, immédiates et avertissements rejoignent le centre d'alertes.
+- **Détection** : « Détecter » reconnaît vROps par `/suite-api/api/deployment/node/status`, seule ressource publique de la Suite API.
+- **Démo** : un vROps fictif est ajouté au mode démonstration, y compris sur une démo déjà initialisée.
+
 ### Interface (réécrite de zéro)
 
 Les sources React de la v2 (`frontend/src`) étaient perdues. L'interface est réécrite avec React 18, TypeScript, Vite, Tailwind, TanStack Query et Recharts. L'API est appelée sur la même origine (`/api`), ce qui corrige I12 (« localhost:8000 en production »).

@@ -169,7 +169,9 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
             </div>
           ) : null}
         </fieldset>
-        <Field label="Compte de service" htmlFor="d-user" hint="Utilisez un compte en lecture seule dédié à la supervision.">
+        <Field label="Compte de service" htmlFor="d-user" hint={form.device_type === 'VROPS'
+          ? 'Compte en lecture seule. Compte d’annuaire déclaré dans vROps : SOURCE\\utilisateur (SOURCE = nom de la source d’authentification dans vROps).'
+          : 'Utilisez un compte en lecture seule dédié à la supervision.'}>
           <Input id="d-user" autoComplete="off" value={form.username} onChange={(e) => set('username', e.target.value)} />
         </Field>
         <Field label="Mot de passe" htmlFor="d-pass" hint={device ? 'Laisser vide pour conserver le mot de passe actuel. Il n’est jamais réaffiché.' : 'Chiffré en base ; il n’est jamais réaffiché.'}>
