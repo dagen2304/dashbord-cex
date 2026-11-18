@@ -24,10 +24,12 @@ VERSION=$(cat "$KIT/VERSION")
 info "Installation de NOC INFRA $VERSION depuis $KIT"
 
 # ── 0. Contrôles ──────────────────────────────────────────────────────────────
-. /etc/os-release
-case "${ID:-}" in
-    rhel|rocky|almalinux|centos) ok "Système : $PRETTY_NAME" ;;
-    *) warn "Système non RHEL ($PRETTY_NAME) : non testé." ;;
+# Lu dans un sous-shell : /etc/os-release définit aussi VERSION (« 8.10 (Ootpa) »).
+# shellcheck disable=SC1091
+read -r OS_ID OS_NAME < <(. /etc/os-release; echo "${ID:-inconnu} ${PRETTY_NAME:-inconnu}")
+case "$OS_ID" in
+    rhel|rocky|almalinux|centos) ok "Système : $OS_NAME" ;;
+    *) warn "Système non RHEL ($OS_NAME) : non testé." ;;
 esac
 if command -v getenforce >/dev/null; then info "SELinux : $(getenforce) (les volumes sont étiquetés automatiquement)"; fi
 if [[ -f $KIT/SHA256SUMS ]]; then
