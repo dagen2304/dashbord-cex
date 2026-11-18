@@ -1,0 +1,28 @@
+[Unit]
+Description=NOC INFRA — collecte (Celery worker)
+Requires=noc-postgres.service noc-redis.service noc-influxdb.service
+After=noc-postgres.service noc-redis.service noc-influxdb.service noc-backend.service
+
+[Container]
+ContainerName=noc-worker
+Image=localhost/noc-backend:current
+Network=noc.network
+Exec=celery -A app.tasks.celery_app.celery_app worker --loglevel=info --concurrency=8
+EnvironmentFile=/etc/noc/noc.env
+EnvironmentFile=/etc/noc/secrets.env
+Secret=noc_database_url,type=env,target=DATABASE_URL
+Secret=noc_influxdb_token,type=env,target=INFLUXDB_TOKEN
+Secret=noc_secret_key,type=env,target=SECRET_KEY
+Secret=noc_jwt_secret,type=env,target=JWT_SECRET
+Volume=/etc/noc/ca:/certs:ro,z
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+PodmanArgs=--memory=2g --cpus=2
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

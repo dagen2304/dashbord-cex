@@ -1,0 +1,25 @@
+[Unit]
+Description=NOC INFRA — planificateur (Celery beat, une seule instance)
+Requires=noc-postgres.service noc-redis.service
+After=noc-postgres.service noc-redis.service noc-backend.service
+
+[Container]
+ContainerName=noc-beat
+Image=localhost/noc-backend:current
+Network=noc.network
+Exec=celery -A app.tasks.celery_app.celery_app beat --loglevel=info --schedule=/tmp/celerybeat-schedule
+EnvironmentFile=/etc/noc/noc.env
+Secret=noc_database_url,type=env,target=DATABASE_URL
+Secret=noc_influxdb_token,type=env,target=INFLUXDB_TOKEN
+Secret=noc_secret_key,type=env,target=SECRET_KEY
+Secret=noc_jwt_secret,type=env,target=JWT_SECRET
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+PodmanArgs=--memory=256m
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

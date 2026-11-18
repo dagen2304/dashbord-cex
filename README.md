@@ -110,4 +110,5 @@ docker compose exec backend curl -fs http://localhost:8000/ready
 ## Documentation
 
 - [docs/REFONTE.md](docs/REFONTE.md) : refonte v3, procédure de mise en production, lot 2
+- [docs/DEPLOIEMENT_RHEL.md](docs/DEPLOIEMENT_RHEL.md) : **production sur serveur RHEL** (Podman + Quadlet, installation hors ligne, sauvegardes, mises à jour, flux réseau)
 - [docs/ROTATION_SECRETS.md](docs/ROTATION_SECRETS.md) : rotation des secrets (phase 0)

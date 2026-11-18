@@ -1,0 +1,28 @@
+[Unit]
+Description=NOC INFRA — PostgreSQL (inventaire, utilisateurs, historique)
+
+[Container]
+ContainerName=noc-postgres
+Image=docker.io/library/postgres:15.10-alpine
+Network=noc.network
+Volume=noc-postgres.volume:/var/lib/postgresql/data
+EnvironmentFile=/etc/noc/noc.env
+Secret=noc_postgres_password,type=env,target=POSTGRES_PASSWORD
+# Durcissement (identique au manifeste Kubernetes)
+User=70
+Group=70
+ReadOnly=true
+# mode 1777 : Podman refuse l'option uid= sur un tmpfs
+Tmpfs=/var/run/postgresql:rw,mode=1777
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=pg_isready -U noc_admin -d noc_dashboard
+HealthInterval=30s
+PodmanArgs=--memory=1g --cpus=1
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=NOC INFRA — Redis (cache temps réel, file de tâches)
+
+[Container]
+ContainerName=noc-redis
+Image=docker.io/library/redis:7.4.1-alpine
+Network=noc.network
+Exec=redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy volatile-lru
+User=999
+Group=999
+ReadOnly=true
+Tmpfs=/data:rw,mode=1777
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=redis-cli ping
+HealthInterval=30s
+PodmanArgs=--memory=320m
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

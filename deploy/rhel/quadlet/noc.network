@@ -1,0 +1,3 @@
+# Réseau privé des conteneurs NOC (résolution DNS par nom de conteneur).
+[Network]
+NetworkName=noc

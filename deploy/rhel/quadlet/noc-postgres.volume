@@ -1,0 +1,4 @@
+[Volume]
+VolumeName=noc-postgres
+# Propriétaire (uid 70, utilisateur de l'image) fixé par install.sh : l'option
+# User=/Group= de Quadlet échoue au lancement avec Podman 4.9 (RHEL 9.4).

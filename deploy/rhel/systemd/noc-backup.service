@@ -1,0 +1,10 @@
+[Unit]
+Description=NOC INFRA — sauvegarde (PostgreSQL, InfluxDB, configuration, secrets)
+Requires=noc-postgres.service noc-influxdb.service
+After=noc-postgres.service noc-influxdb.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/noc/deploy/rhel/backup.sh
+Nice=10
+IOSchedulingClass=idle
