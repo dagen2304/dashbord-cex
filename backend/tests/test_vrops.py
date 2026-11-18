@@ -26,15 +26,25 @@ STATS = {
     "vm0": {"summary|oversized": 1, "summary|oversized|vcpus": 4, "summary|oversized|memory": 16 * 1024 * 1024},
     "vm1": {"summary|undersized": 1, "summary|undersized|vcpus": 2},
     "vm2": {"summary|idle": 1},
-    "vm3": {"summary|oversized": 0, "summary|undersized": 0, "summary|idle": 0},
+    "vm3": {"summary|oversized": 0, "summary|undersized": 0, "summary|idle": 0,
+            "cpu|readyPct": 12.0, "cpu|costopPct": 1.0, "virtualDisk|totalLatency": 45.0, "diskspace|snapshot": 120.5},
+    "vm4": {"cpu|readyPct": 2.0, "mem|balloonPct": 0.0, "diskspace|snapshot": 8.0},
+    "h1": {"cpu|usage_average": 70.0, "mem|usage_average": 81.0, "badge|health": 25},
+}
+HEALTH = {"h1": "RED", "vm3": "YELLOW"}
+PROPS = {
+    "h1": {"summary|parentCluster": "CL-PROD", "runtime|connectionState": "connected", "runtime|maintenanceState": "inMaintenance"},
+    "vm0": {"summary|parentCluster": "CL-PROD"},
+    "vm3": {"summary|parentCluster": "CL-DEV"},
+    "c1": {"summary|parentVcenter": "vcsa-prod"},
 }
 ALERTS = [
     {"alertId": "a1", "resourceId": "h1", "alertLevel": "CRITICAL", "status": "ACTIVE",
-     "alertDefinitionName": "Host has lost connection to vCenter"},
+     "alertDefinitionName": "Host has lost connection to vCenter", "alertImpact": "HEALTH", "startTimeUTC": 1763460000000},
     {"alertId": "a2", "resourceId": "d1", "alertLevel": "IMMEDIATE", "status": "ACTIVE",
      "alertDefinitionName": "Datastore is running out of disk space"},
     {"alertId": "a3", "resourceId": "vm1", "alertLevel": "WARNING", "status": "ACTIVE",
-     "alertDefinitionName": "VM has CPU contention"},
+     "alertDefinitionName": "VM has CPU contention", "alertImpact": "RISK", "startTimeUTC": 1763463600000},
     {"alertId": "a4", "resourceId": "vm2", "alertLevel": "INFORMATION", "status": "ACTIVE",
      "alertDefinitionName": "Ignorée"},
     {"alertId": "a5", "resourceId": "zz", "alertLevel": "CRITICAL", "status": "CANCELED",
@@ -43,8 +53,9 @@ ALERTS = [
 
 
 class FakeSuiteApi(BaseAdapter):
-    def __init__(self, login_status=200, fail_path=None, page_size=None):
+    def __init__(self, login_status=200, fail_path=None, page_size=None, props_status=200):
         super().__init__()
+        self.props_status = props_status
         self.calls, self.login_status, self.fail_path, self.page_size = [], login_status, fail_path, page_size
 
     def send(self, request, **kwargs):
@@ -69,8 +80,8 @@ class FakeSuiteApi(BaseAdapter):
             page = int(query["page"][0])
             chunk = rows[page * size:(page + 1) * size]
             data = {"pageInfo": {"totalCount": len(rows), "page": page, "pageSize": size},
-                    "resourceList": [{"identifier": i, "resourceKey": {"name": n, "adapterKindKey": "VMWARE"}}
-                                     for i, n in chunk]}
+                    "resourceList": [{"identifier": i, "resourceKey": {"name": n, "adapterKindKey": "VMWARE"},
+                                      "resourceHealth": HEALTH.get(i, "GREEN")} for i, n in chunk]}
         elif path == "/suite-api/api/resources/stats/latest/query":
             values = []
             for rid in body["resourceId"]:
@@ -78,6 +89,14 @@ class FakeSuiteApi(BaseAdapter):
                          for k, v in STATS.get(rid, {}).items() if k in body["statKey"]]
                 values.append({"resourceId": rid, "stat-list": {"stat": stats}})
             data = {"values": values}
+        elif path == "/suite-api/api/resources/properties":
+            if self.props_status != 200:
+                resp.status_code = self.props_status
+            else:
+                assert len(query["resourceId"]) <= 100
+                data = {"resourcePropertiesList": [
+                    {"resourceId": rid, "property": [{"name": k, "value": v} for k, v in PROPS.get(rid, {}).items()]}
+                    for rid in query["resourceId"]]}
         elif path == "/suite-api/api/alerts":
             data = {"pageInfo": {"totalCount": len(ALERTS)}, "alerts": ALERTS}
         else:
@@ -130,37 +149,70 @@ def test_metrics_capacity_rightsizing_and_alerts():
     assert (m["clusters_total"], m["hosts_total"], m["vms_total"]) == (2, 3, 5)
     assert (m["alerts_critical"], m["alerts_immediate"], m["alerts_warning"]) == (1, 1, 1)
     assert (m["vms_oversized"], m["vms_undersized"], m["vms_idle"]) == (1, 1, 1)
+    assert (m["reclaimable_vcpus"], m["reclaimable_memory_gb"]) == (4, 16.0)
+    assert m["snapshots_gb"] == 128.5 and m["vms_contention"] == 1
     assert m["capacity_time_remaining_days"] == 21          # minimum clusters + datastores
     assert m["datastores_usage_pct"] == round(8704 / 12288 * 100, 1)
 
     prod = next(c for c in payload["clusters_metrics"] if c["name"] == "CL-PROD")
-    assert prod == {"name": "CL-PROD", "cpu_usage_pct": 61.25, "ram_usage_pct": 78.5, "time_remaining_days": 120,
-                    "capacity_remaining_pct": 22, "health": 100, "risk": 25, "efficiency": 50, "running_vms": 3}
+    assert prod == {"name": "CL-PROD", "color": "GREEN", "vcenter": "vcsa-prod", "cpu_usage_pct": 61.25,
+                    "ram_usage_pct": 78.5, "time_remaining_days": 120, "capacity_remaining_pct": 22, "health": 100,
+                    "risk": 25, "efficiency": 50, "running_vms": 3}
     dev = next(c for c in payload["clusters_metrics"] if c["name"] == "CL-DEV")
-    assert "health" not in dev                                # valeur absente = champ absent, jamais 0
+    assert "health" not in dev and "vcenter" not in dev      # valeur absente = champ absent, jamais 0
 
-    ds1 = payload["vrops_datastores"][0]
-    assert ds1 == {"name": "DS-01", "capacity_tb": 10.0, "used_tb": 8.0, "usage_pct": 80.0, "time_remaining_days": 21}
+    assert payload["vrops_datastores"][0] == {"name": "DS-01", "color": "GREEN", "capacity_tb": 10.0, "used_tb": 8.0,
+                                              "usage_pct": 80.0, "time_remaining_days": 21}
 
     rs = payload["rightsizing"]
-    assert rs[0] == {"vm_name": "VM-000", "kind": "oversized", "vcpus": 4, "memory_gb": 16.0}
+    assert rs[0] == {"vm_name": "VM-000", "kind": "oversized", "vcpus": 4, "memory_gb": 16.0, "cluster": "CL-PROD"}
     assert {r["kind"] for r in rs} == {"oversized", "undersized", "idle"}
+    assert all("id" not in r for r in rs)
 
-    alerts = payload["alerts"]
-    assert alerts[0]["component"] == "Capacité" and "21 jour" in alerts[0]["message"]
-    crit = [a for a in alerts if a["severity"] == "CRITICAL"]
-    assert crit == [{"severity": "CRITICAL", "component": "esx01", "message": "Host has lost connection to vCenter"}]
-    assert any(a["component"] == "DS-01" and "(immédiate)" in a["message"] for a in alerts)
-    assert not any("Ignorée" in a["message"] or "Annulée" in a["message"] for a in alerts)
+
+def test_hosts_contention_snapshots_and_health():
+    payload = _run(FakeSuiteApi())
+    h1 = next(h for h in payload["vrops_hosts"] if h["name"] == "esx01")
+    assert h1 == {"name": "esx01", "color": "RED", "cpu_usage_pct": 70.0, "ram_usage_pct": 81.0, "health": 25,
+                  "cluster": "CL-PROD", "connection": "connected", "maintenance": "inMaintenance"}
+    # Seule VM-003 dépasse un seuil (ready 12 % > 5, latence 45 ms > 20) ; VM-004 (ready 2 %) non.
+    assert [c["vm_name"] for c in payload["vm_contention"]] == ["VM-003"]
+    c = payload["vm_contention"][0]
+    assert c["cluster"] == "CL-DEV" and c["cpu_ready_pct"] == 12.0 and c["score"] == round(12 / 5 + 45 / 20, 2)
+    assert [s["vm_name"] for s in payload["snapshots"]] == ["VM-003", "VM-004"]
+    assert payload["health_summary"]["Hôte"] == {"GREEN": 2, "YELLOW": 0, "ORANGE": 0, "RED": 1, "GREY": 0}
+    assert payload["health_summary"]["VM"]["YELLOW"] == 1
+
+
+def test_alerts_center_and_tab():
+    payload = _run(FakeSuiteApi())
+    center = payload["alerts"]
+    assert center[0]["component"] == "Capacité" and "21 jour" in center[0]["message"]
+    assert [a["severity"] for a in center[1:]] == ["CRITICAL", "WARNING"]   # critique + immédiate seulement
+    assert center[1] == {"severity": "CRITICAL", "component": "esx01", "message": "Host has lost connection to vCenter"}
+    assert not any("contention" in a["message"] for a in center)           # avertissements : onglet seulement
+
+    tab = payload["vrops_alerts"]
+    assert [a["level"] for a in tab] == ["CRITICAL", "IMMEDIATE", "WARNING", "INFORMATION"]
+    assert tab[0] == {"level": "CRITICAL", "impact": "HEALTH", "name": "Host has lost connection to vCenter",
+                      "object": "esx01", "object_kind": "Hôte", "started_at": "2025-11-18T10:00:00+00:00"}
+    assert not any(a["name"] == "Annulée" for a in tab)
     assert payload["status"] == "WARNING"
 
 
 def test_missing_stat_keys_are_reported_not_invented():
     payload = _run(FakeSuiteApi())
-    info = [a for a in payload["alerts"] if a["severity"] == "INFO"]
-    assert len(info) == 1
-    assert "badge|health" not in info[0]["message"]          # fourni pour au moins un objet
-    assert "summary|undersized|memory" in info[0]["message"]  # jamais fourni
+    missing = payload["vrops_missing_keys"]
+    assert "badge|health" not in missing                     # fourni pour au moins un objet
+    assert "summary|undersized|memory" in missing            # jamais fourni
+    assert not any(a["severity"] == "INFO" for a in payload["alerts"])   # plus de bruit dans le centre d'alertes
+
+
+def test_properties_are_optional():
+    payload = _run(FakeSuiteApi(props_status=403))
+    assert payload["status"] != "OFFLINE"
+    assert "cluster" not in payload["vrops_hosts"][0]
+    assert any("Propriétés" in d for d in payload["vrops_diagnostics"])
 
 
 def test_resources_are_paged():

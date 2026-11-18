@@ -91,7 +91,8 @@ export function TimeSeriesChart({ data, series, unit, digits = 1, height = 260, 
               y={t.value}
               stroke={t.tone === 'crit' ? C.crit : C.warn}
               strokeDasharray="4 4"
-              label={{ value: t.label, position: t.tone === 'crit' ? 'insideTopRight' : 'insideBottomRight', fill: 'rgb(var(--fg-2))', fontSize: 11 }}
+              // Libellé du seuil critique au-dessus de sa ligne, celui d'attention en dessous : jamais superposés.
+              label={{ value: t.label, position: t.tone === 'crit' ? 'insideBottomRight' : 'insideTopRight', fill: 'rgb(var(--fg-2))', fontSize: 11 }}
             />
           ))}
           {series.map((s, i) => (

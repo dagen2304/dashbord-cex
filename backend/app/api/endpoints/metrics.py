@@ -35,7 +35,8 @@ SPARKLINE_FIELD_BY_TYPE = {"NETBACKUP": "backup_success_rate", "VERITAS_ACCESS":
 
 # Détails volumineux exclus de la vue d'ensemble (disponibles via /devices/{id}).
 _HEAVY_KEYS = ("vms_metrics", "vms_fs_metrics", "hosts_metrics", "datastores_metrics",
-               "clusters_metrics", "vrops_datastores", "rightsizing")
+               "clusters_metrics", "vrops_datastores", "rightsizing", "vrops_hosts", "vm_contention",
+               "snapshots", "vrops_alerts", "health_summary", "vrops_missing_keys", "vrops_diagnostics")
 
 
 def _parse_ts(value: Optional[str]) -> Optional[datetime]:
@@ -83,7 +84,8 @@ def _device_view(dev: InfrastructureDevice, payload: Optional[dict], interval_s:
         for key in _HEAVY_KEYS:
             if key in ("vms_metrics", "vms_fs_metrics"):
                 continue  # trop volumineux : servis par les écrans VMs dédiés
-            view[key] = payload.get(key, [])
+            if key in payload:
+                view[key] = payload[key]
     return view
 
 

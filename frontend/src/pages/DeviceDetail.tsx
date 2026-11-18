@@ -6,7 +6,6 @@ import { api } from '@/lib/api'
 import { CATEGORY_LABEL, METRIC_META, TYPE_LABEL, dateTime, isDemoHost, fmt, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
 import type { DeviceState, SeriesPoint } from '@/lib/types'
 import { TimeSeriesChart } from '@/components/charts'
-import { VropsSections } from '@/components/VropsSections'
 import { Card, DemoBadge, EmptyState, ErrorState, FilterField, PageHeader, Segmented, Select, Spinner, StatusBadge, UsageBar } from '@/components/ui'
 
 const RANGES = [
@@ -117,7 +116,16 @@ export default function DeviceDetail() {
         </>
       )}
 
-      {d.device_type === 'VROPS' && d.status !== 'NO_DATA' ? <VropsSections d={d} /> : null}
+      {d.device_type === 'VROPS' ? (
+        <Card className="mb-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-fg-2">Clusters, capacité, contention, optimisation et alertes de cette source sont dans l’onglet dédié.</p>
+            <Link to={`/vrealize?source=${d.device_id}`} className="inline-flex h-9 items-center rounded-md bg-accent px-3 text-sm font-medium text-on-accent hover:opacity-90">
+              Ouvrir l’onglet vRealize
+            </Link>
+          </div>
+        </Card>
+      ) : null}
 
       {d.hosts_metrics?.length ? (
         <Card className="mb-4" title={`Hôtes ESXi (${d.hosts_metrics.length})`} bodyClassName="p-0">

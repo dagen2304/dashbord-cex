@@ -168,6 +168,8 @@ def _store_timeseries(device_id: str, payload: Dict[str, Any]) -> None:
         influx.write_vm_fs_telemetry(device_id, payload["vms_fs_metrics"])
     if payload.get("datastores_metrics"):
         influx.write_ds_telemetry(device_id, payload["datastores_metrics"])
+    if payload.get("clusters_metrics"):
+        influx.write_cluster_telemetry(device_id, payload["clusters_metrics"])
 
 
 def _sync_vm_inventory(payload: Dict[str, Any]) -> None:

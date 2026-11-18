@@ -2,7 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import clsx from 'clsx'
 import {
-  Bell, Boxes, ChartLine, Gauge, HardDrive, LayoutDashboard, LogOut, Menu, Moon, Server, Settings, Sun, UserRound, X,
+  Bell, Boxes, ChartLine, Gauge, HardDrive, LayoutDashboard, LogOut, Menu, Moon, Radar, Server, Settings, Sun, UserRound, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { ROLE_LABEL, useAuth } from '@/lib/auth'
@@ -25,6 +25,7 @@ const NAV: Array<{ section: string; items: NavItem[] }> = [
   {
     section: 'Analyse',
     items: [
+      { to: '/vrealize', label: 'vRealize', icon: Radar },
       { to: '/capacity', label: 'Capacité', icon: Gauge },
       { to: '/explorer', label: 'Explorateur', icon: ChartLine },
     ],

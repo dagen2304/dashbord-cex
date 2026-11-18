@@ -31,12 +31,15 @@ DEVICE_FIELDS = {
     # vRealize Operations
     "clusters_total", "alerts_critical", "alerts_immediate", "alerts_warning",
     "vms_oversized", "vms_undersized", "vms_idle", "capacity_time_remaining_days",
+    "vms_contention", "reclaimable_vcpus", "reclaimable_memory_gb", "snapshots_gb",
 }
 VM_FIELDS = {"cpu_usage_pct", "ram_usage_pct", "storage_gb", "read_latency_ms", "write_latency_ms"}
 DS_FIELDS = {"usage_pct", "read_latency_ms", "write_latency_ms"}
+CLUSTER_FIELDS = {"cpu_usage_pct", "cpu_demand_pct", "ram_usage_pct", "time_remaining_days", "health", "risk", "efficiency"}
 OBJECT_TYPES = {
     "Virtual Machine": ("vm_telemetry", "vm_name", VM_FIELDS),
     "Datastore": ("ds_telemetry", "datastore_name", DS_FIELDS),
+    "Cluster": ("cluster_telemetry", "cluster_name", CLUSTER_FIELDS),
 }
 
 
@@ -183,6 +186,19 @@ class InfluxDBManager:
                     p.field(f, float(ds[f]))
             points.append(p)
         self._write(points, "ds_telemetry")
+
+    def write_cluster_telemetry(self, device_id: str, clusters: List[Dict[str, Any]]) -> None:
+        """Historique des clusters vu par vROps (tendances de l'onglet vRealize, Explorateur)."""
+        now = datetime.now(timezone.utc)
+        points = []
+        for c in clusters:
+            p = Point("cluster_telemetry").tag("device_id", device_id).tag("cluster_name", c["name"]).time(now, WritePrecision.S)
+            fields = [f for f in CLUSTER_FIELDS if isinstance(c.get(f), (int, float))]
+            for f in fields:
+                p.field(f, float(c[f]))
+            if fields:
+                points.append(p)
+        self._write(points, "cluster_telemetry")
 
     # ── Lecture : équipements ───────────────────────────────────────────────
     def get_metric_history(self, device_id: str, field_name: str, hours: int = 6, points: int = 48) -> List[Dict[str, Any]]:
@@ -350,6 +366,7 @@ class InfluxDBManager:
         return {
             "Virtual Machine": self._tag_values("vm_name", "vm_telemetry"),
             "Datastore": self._tag_values("datastore_name", "ds_telemetry"),
+            "Cluster": self._tag_values("cluster_name", "cluster_telemetry"),
         }
 
     def get_object_history(self, object_type: str, object_name: str, field: str, hours: int) -> List[Dict[str, Any]]:

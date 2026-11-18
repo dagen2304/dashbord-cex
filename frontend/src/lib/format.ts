@@ -100,6 +100,10 @@ export const METRIC_META: Record<string, { label: string; unit?: string; digits?
   vms_undersized: { label: 'VMs sous-dimensionnées', digits: 0 },
   vms_idle: { label: 'VMs inactives', digits: 0 },
   capacity_time_remaining_days: { label: 'Avant saturation', unit: 'j', digits: 0 },
+  vms_contention: { label: 'VMs en contention', digits: 0 },
+  reclaimable_vcpus: { label: 'vCPU récupérables', digits: 0 },
+  reclaimable_memory_gb: { label: 'RAM récupérable', unit: 'Go', digits: 0 },
+  snapshots_gb: { label: 'Snapshots', unit: 'Go', digits: 0 },
 }
 
 export function metricLabel(field: string): string {

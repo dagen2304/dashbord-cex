@@ -19,6 +19,7 @@ const VirtualMachines = lazy(() => import('@/pages/VirtualMachines'))
 const Applications = lazy(() => import('@/pages/Applications'))
 const Capacity = lazy(() => import('@/pages/Capacity'))
 const Explorer = lazy(() => import('@/pages/Explorer'))
+const Vrealize = lazy(() => import('@/pages/Vrealize'))
 const Inventory = lazy(() => import('@/pages/Inventory'))
 const Settings = lazy(() => import('@/pages/Settings'))
 const Account = lazy(() => import('@/pages/Account'))
@@ -54,6 +55,7 @@ function App() {
           <Route path="applications" element={<Applications />} />
           <Route path="capacity" element={<Capacity />} />
           <Route path="explorer" element={<Explorer />} />
+          <Route path="vrealize" element={<Vrealize />} />
           <Route path="inventory" element={<Inventory />} />
           <Route path="settings" element={<RequireRole role="admin"><Settings /></RequireRole>} />
           <Route path="account" element={<Account />} />

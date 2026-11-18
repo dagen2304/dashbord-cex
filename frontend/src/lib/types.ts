@@ -43,20 +43,82 @@ export interface DeviceState {
   datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number; read_latency_ms?: number; write_latency_ms?: number }>
   /** vRealize Operations : champ absent = valeur non fournie par vROps. */
   clusters_metrics?: VropsCluster[]
-  vrops_datastores?: Array<{ name: string; capacity_tb?: number; used_tb?: number; usage_pct?: number; time_remaining_days?: number; health?: number }>
-  rightsizing?: Array<{ vm_name: string; kind: 'oversized' | 'undersized' | 'idle'; vcpus?: number; memory_gb?: number }>
+  vrops_hosts?: VropsHost[]
+  vrops_datastores?: VropsDatastore[]
+  rightsizing?: VropsRightsizing[]
+  vm_contention?: VropsContention[]
+  snapshots?: Array<{ vm_name: string; cluster?: string; snapshot_gb: number }>
+  vrops_alerts?: VropsAlert[]
+  health_summary?: Record<string, Record<HealthColor, number>>
+  vrops_missing_keys?: string[]
+  vrops_diagnostics?: string[]
 }
+
+/** Couleur de santé vROps (badge Health). */
+export type HealthColor = 'GREEN' | 'YELLOW' | 'ORANGE' | 'RED' | 'GREY'
 
 export interface VropsCluster {
   name: string
+  color?: HealthColor
+  vcenter?: string
   cpu_usage_pct?: number
+  cpu_demand_pct?: number
   ram_usage_pct?: number
   time_remaining_days?: number
+  cpu_time_remaining_days?: number
+  ram_time_remaining_days?: number
+  disk_time_remaining_days?: number
   capacity_remaining_pct?: number
   health?: number
   risk?: number
   efficiency?: number
   running_vms?: number
+  hosts?: number
+}
+
+export interface VropsHost {
+  name: string
+  color?: HealthColor
+  cluster?: string
+  cpu_usage_pct?: number
+  ram_usage_pct?: number
+  health?: number
+  running_vms?: number
+  connection?: string
+  maintenance?: string
+}
+
+export interface VropsDatastore {
+  name: string
+  color?: HealthColor
+  capacity_tb?: number
+  used_tb?: number
+  usage_pct?: number
+  time_remaining_days?: number
+  health?: number
+}
+
+export interface VropsRightsizing { vm_name: string; cluster?: string; kind: 'oversized' | 'undersized' | 'idle'; vcpus?: number; memory_gb?: number }
+
+export interface VropsContention {
+  vm_name: string
+  cluster?: string
+  score: number
+  cpu_ready_pct?: number
+  cpu_costop_pct?: number
+  ram_balloon_pct?: number
+  disk_latency_ms?: number
+  cpu_usage_pct?: number
+  ram_usage_pct?: number
+}
+
+export interface VropsAlert {
+  level: 'CRITICAL' | 'IMMEDIATE' | 'WARNING' | 'INFORMATION'
+  impact: 'HEALTH' | 'RISK' | 'EFFICIENCY' | null
+  name: string
+  object: string | null
+  object_kind: string | null
+  started_at: string | null
 }
 
 export interface Device {

@@ -177,45 +177,108 @@ def _storage_payload(dtype: str, t: float, days: float) -> Dict[str, Any]:
 
 
 def _vrops_payload(t: float, days: float) -> Dict[str, Any]:
-    """Même structure que VRopsCollector : clusters, datastores, rightsizing, alertes vROps."""
+    """Même structure que VRopsCollector (voir app/services/vrops_collector.py)."""
+    now = datetime.now(timezone.utc)
     clusters = []
-    for i, (name, base, vms) in enumerate([("CL-PROD-01", 64, 14), ("CL-PROD-02", 71, 14), ("CL-PRA-01", 28, 6), ("CL-PRA-02", 33, 6)]):
+    specs = [("CL-PROD-01", 64, 14, "vcsa-prod"), ("CL-PROD-02", 71, 14, "vcsa-prod"),
+             ("CL-PRA-01", 28, 6, "vcsa-pra"), ("CL-PRA-02", 33, 6, "vcsa-pra")]
+    for i, (name, base, vms, vc) in enumerate(specs):
         cpu = round(base * 0.7 + 6 * _wave(t, 90, i), 1)
         ram = round(base + 4 * _wave(t, 240, i), 1)
         remaining = max(5.0, round((140 if i < 2 else 400) - 40 * i - days, 1))
-        clusters.append({"name": name, "cpu_usage_pct": cpu, "ram_usage_pct": ram, "time_remaining_days": remaining,
-                         "capacity_remaining_pct": round(100 - ram, 0), "health": [100, 75, 100, 100][i],
-                         "risk": [25, 50, 0, 25][i], "efficiency": [50, 25, 75, 75][i], "running_vms": vms})
+        clusters.append({
+            "name": name, "color": ["GREEN", "YELLOW", "GREEN", "GREEN"][i], "vcenter": vc,
+            "cpu_usage_pct": cpu, "cpu_demand_pct": round(cpu * 1.08, 1), "ram_usage_pct": ram,
+            "time_remaining_days": remaining, "cpu_time_remaining_days": round(remaining * 2.4, 1),
+            "ram_time_remaining_days": remaining, "disk_time_remaining_days": round(remaining * 1.6, 1),
+            "capacity_remaining_pct": round(100 - ram, 0), "health": [100, 75, 100, 100][i],
+            "risk": [25, 50, 0, 25][i], "efficiency": [50, 25, 75, 75][i], "running_vms": vms, "hosts": 4})
+    hosts = []
+    for i in range(16):
+        cl = clusters[i // 4]
+        hosts.append({
+            "name": f"esx-{'prod' if i < 8 else 'pra'}-{i % 8 + 1:02d}", "cluster": cl["name"],
+            "color": "RED" if i == 6 else "GREEN",
+            "cpu_usage_pct": round(max(3.0, cl["cpu_usage_pct"] + 9 * _wave(t, 60, i)), 1),
+            "ram_usage_pct": round(min(97.0, cl["ram_usage_pct"] + 6 * _wave(t, 200, i)), 1),
+            "health": 25 if i == 6 else 100, "running_vms": cl["running_vms"] // 4,
+            "connection": "connected", "maintenance": "inMaintenance" if i == 13 else "notInMaintenance"})
     datastores = []
     for i, (name, cap, used) in enumerate([("DS-PROD-01", 20.0, 17.4), ("DS-PROD-02", 20.0, 13.1),
                                            ("DS-PRA-01", 12.0, 5.2), ("DS-PRA-02", 12.0, 4.4)]):
         used = round(used + 0.05 * days, 2)
-        datastores.append({"name": name, "capacity_tb": cap, "used_tb": used, "usage_pct": round(used / cap * 100, 1),
+        datastores.append({"name": name, "color": "ORANGE" if i == 0 else "GREEN", "capacity_tb": cap, "used_tb": used,
+                           "usage_pct": round(used / cap * 100, 1), "health": 50 if i == 0 else 100,
                            "time_remaining_days": max(3.0, round([24, 160, 420, 500][i] - days, 1))})
     datastores.sort(key=lambda d: d["usage_pct"], reverse=True)
+
+    def vm(i: int) -> str:
+        return f"vm-{APPS[i % 5]}-{i:02d}"
+
+    def cluster_of(i: int) -> str:
+        return clusters[0 if i < 14 else 1 if i < 28 else 2 if i < 34 else 3]["name"]
+
     rightsizing = (
-        [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "oversized", "vcpus": 2 + i % 3 * 2, "memory_gb": float(8 + i % 4 * 8)} for i in (1, 4, 7, 9, 12, 15, 21)]
-        + [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "undersized", "vcpus": 2, "memory_gb": 4.0} for i in (3, 18)]
-        + [{"vm_name": f"vm-{APPS[i % 5]}-{i:02d}", "kind": "idle"} for i in (30, 33, 37)]
+        [{"vm_name": vm(i), "kind": "oversized", "cluster": cluster_of(i), "vcpus": 2 + i % 3 * 2, "memory_gb": float(8 + i % 4 * 8)} for i in (1, 4, 7, 9, 12, 15, 21)]
+        + [{"vm_name": vm(i), "kind": "undersized", "cluster": cluster_of(i), "vcpus": 2, "memory_gb": 4.0} for i in (3, 18)]
+        + [{"vm_name": vm(i), "kind": "idle", "cluster": cluster_of(i)} for i in (30, 33, 37)]
     )
-    min_days = min(r["time_remaining_days"] for r in clusters + datastores)
-    alerts = [
-        {"severity": "CRITICAL", "component": "esx-prod-07", "message": "Host has lost redundant connectivity to a dvPort"},
-        {"severity": "WARNING", "component": "DS-PROD-01", "message": "Datastore is running out of disk space (immédiate)"},
-        {"severity": "WARNING", "component": "vm-sap-01", "message": "Virtual machine has CPU contention caused by co-stop"},
-        {"severity": "WARNING", "component": "CL-PROD-02", "message": "Cluster has memory contention caused by overcommit"},
+    contention = []
+    for k, i in enumerate((0, 16, 22, 5, 27)):
+        row = {"vm_name": vm(i), "cluster": cluster_of(i),
+               "cpu_ready_pct": round(max(0.5, [11.5, 7.2, 3.1, 6.0, 2.0][k] + 1.5 * _wave(t, 30, k)), 1),
+               "cpu_costop_pct": [4.2, 0.4, 0.2, 0.8, 0.1][k], "ram_balloon_pct": [0.0, 0.0, 6.5, 0.0, 0.0][k],
+               "disk_latency_ms": round([12.0, 8.0, 18.0, 31.0, 26.0][k] + 3 * _wave(t, 45, k), 1),
+               "cpu_usage_pct": [88.0, 71.0, 45.0, 64.0, 33.0][k], "ram_usage_pct": [76.0, 69.0, 93.0, 58.0, 41.0][k]}
+        row["score"] = round(sum(row[f] / lim for f, lim in
+                                 (("cpu_ready_pct", 5), ("cpu_costop_pct", 3), ("ram_balloon_pct", 1), ("disk_latency_ms", 20))
+                                 if row[f] > lim), 2)
+        if row["score"] > 0:
+            contention.append(row)
+    contention.sort(key=lambda r: r["score"], reverse=True)
+    snapshots = [{"vm_name": vm(i), "cluster": cluster_of(i), "snapshot_gb": gb}
+                 for i, gb in ((2, 412.6), (11, 188.0), (24, 96.3), (8, 42.1), (35, 12.4))]
+
+    def ago(hours: float) -> str:
+        return (now - timedelta(hours=hours)).isoformat()
+
+    tab_alerts = [
+        {"level": "CRITICAL", "impact": "HEALTH", "name": "Host has lost redundant connectivity to a dvPort", "object": "esx-prod-07", "object_kind": "Hôte", "started_at": ago(3.2)},
+        {"level": "IMMEDIATE", "impact": "RISK", "name": "Datastore is running out of disk space", "object": "DS-PROD-01", "object_kind": "Datastore", "started_at": ago(26)},
+        {"level": "WARNING", "impact": "HEALTH", "name": "Virtual machine has CPU contention caused by co-stop", "object": "vm-sap-00", "object_kind": "VM", "started_at": ago(1.1)},
+        {"level": "WARNING", "impact": "RISK", "name": "Cluster has memory contention caused by overcommit", "object": "CL-PROD-02", "object_kind": "Cluster", "started_at": ago(9)},
+        {"level": "WARNING", "impact": "EFFICIENCY", "name": "Virtual machine has large snapshots", "object": "vm-db-02", "object_kind": "VM", "started_at": ago(70)},
+        {"level": "INFORMATION", "impact": "EFFICIENCY", "name": "Virtual machine is idle", "object": "vm-sap-30", "object_kind": "VM", "started_at": ago(240)},
     ]
+    counts = {lvl: sum(1 for a in tab_alerts if a["level"] == lvl) for lvl in ("CRITICAL", "IMMEDIATE", "WARNING")}
+    min_days = min(r["time_remaining_days"] for r in clusters + datastores)
+    alerts = [{"severity": "CRITICAL" if a["level"] == "CRITICAL" else "WARNING", "component": a["object"],
+               "message": a["name"] + (" (immédiate)" if a["level"] == "IMMEDIATE" else "")}
+              for a in tab_alerts if a["level"] in ("CRITICAL", "IMMEDIATE")]
     if min_days < 30:
         alerts.insert(0, {"severity": "WARNING", "component": "Capacité", "message": f"Saturation prévue par vROps dans {min_days:g} jour(s)"})
+    oversized = [r for r in rightsizing if r["kind"] == "oversized"]
     metrics = {
         "clusters_total": 4, "hosts_total": 16, "vms_total": 40,
-        "alerts_critical": 1, "alerts_immediate": 1, "alerts_warning": 2,
-        "vms_oversized": 7, "vms_undersized": 2, "vms_idle": 3,
+        "alerts_critical": counts["CRITICAL"], "alerts_immediate": counts["IMMEDIATE"], "alerts_warning": counts["WARNING"],
+        "vms_oversized": len(oversized), "vms_undersized": 2, "vms_idle": 3, "vms_contention": len(contention),
+        "reclaimable_vcpus": sum(r["vcpus"] for r in oversized),
+        "reclaimable_memory_gb": sum(r["memory_gb"] for r in oversized),
+        "snapshots_gb": round(sum(r["snapshot_gb"] for r in snapshots), 1),
         "capacity_time_remaining_days": min_days,
         "datastores_usage_pct": round(sum(d["used_tb"] for d in datastores) / sum(d["capacity_tb"] for d in datastores) * 100, 1),
     }
+    health_summary = {
+        "Cluster": {"GREEN": 3, "YELLOW": 1, "ORANGE": 0, "RED": 0, "GREY": 0},
+        "Hôte": {"GREEN": 15, "YELLOW": 0, "ORANGE": 0, "RED": 1, "GREY": 0},
+        "Datastore": {"GREEN": 3, "YELLOW": 0, "ORANGE": 1, "RED": 0, "GREY": 0},
+        "VM": {"GREEN": 33, "YELLOW": 4, "ORANGE": 1, "RED": 0, "GREY": 2},
+    }
     return {"device_type": "operations", "status": "WARNING", "metrics": metrics, "alerts": alerts,
-            "clusters_metrics": clusters, "vrops_datastores": datastores, "rightsizing": rightsizing}
+            "clusters_metrics": clusters, "vrops_hosts": hosts, "vrops_datastores": datastores,
+            "rightsizing": rightsizing, "vm_contention": contention, "snapshots": snapshots,
+            "vrops_alerts": tab_alerts, "health_summary": health_summary,
+            "vrops_missing_keys": [], "vrops_diagnostics": []}
 
 
 def _payload(dev: InfrastructureDevice, t: float, days: float) -> Dict[str, Any]:
@@ -287,6 +350,11 @@ def _seed(db) -> None:
                 for f in ("cpu_usage_pct", "ram_usage_pct", "storage_gb", "read_latency_ms", "write_latency_ms"):
                     vp.field(f, float(vm[f]))
                 points.append(vp)
+            for c in p.get("clusters_metrics", []):
+                cp = Point("cluster_telemetry").tag("device_id", dev.id).tag("cluster_name", c["name"]).time(ts, WritePrecision.S)
+                for f in ("cpu_usage_pct", "cpu_demand_pct", "ram_usage_pct", "time_remaining_days", "health", "risk", "efficiency"):
+                    cp.field(f, float(c[f]))
+                points.append(cp)
             for ds in p.get("datastores_metrics", []):
                 dp = (Point("ds_telemetry").tag("device_id", dev.id).tag("datastore_name", ds["datastore_name"])
                       .field("usage_pct", float(ds["usage_pct"])).time(ts, WritePrecision.S))

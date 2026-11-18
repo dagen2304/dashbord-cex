@@ -20,7 +20,7 @@ function DeviceCard({ d }: { d: DeviceState }) {
   const firstAlert = d.alerts.find((a) => a.severity === 'CRITICAL') ?? d.alerts[0]
   return (
     <Link
-      to={`/devices/${d.device_id}`}
+      to={d.device_type === 'VROPS' ? `/vrealize?source=${d.device_id}` : `/devices/${d.device_id}`}
       className={clsx(
         'card group flex flex-col gap-3 p-4 transition-colors hover:border-muted',
         tone === 'crit' && 'border-l-[3px] border-l-crit',

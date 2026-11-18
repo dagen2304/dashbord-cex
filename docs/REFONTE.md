@@ -165,17 +165,23 @@ Désormais, comme le prévoit le guide de l'API REST Unisphere :
 
 ### vRealize Operations 8.x (Aria Operations)
 
-Nouveau type d'équipement **« VMware vRealize Operations »** (`VROPS`), collecté par la Suite API REST en lecture seule (`backend/app/services/vrops_collector.py`). Écrit pour la version 8.10.2 en service.
+Nouveau type d'équipement **« VMware vRealize Operations »** (`VROPS`), collecté par la Suite API REST en lecture seule (`backend/app/services/vrops_collector.py`), et **onglet dédié « vRealize »** (`frontend/src/pages/Vrealize.tsx`). Écrit pour la version 8.10.2 en service.
 
-- **Rôle** : vROps complète la collecte vCenter, il ne la remplace pas. vCenter reste la source du temps réel (latences toutes les 20 s, état des hôtes). vROps apporte l'analyse : capacité restante et jours avant saturation, scores santé / risque / efficacité par cluster, VMs surdimensionnées, sous-dimensionnées ou inactives, alertes vROps.
+- **Rôle** : vROps complète la collecte vCenter, il ne la remplace pas. vCenter reste la source du temps réel (latences toutes les 20 s, état des hôtes) ; vROps apporte l'analyse.
+- **Onglet vRealize**, cinq vues (l'URL garde la vue choisie, `?vue=`) :
+  - *Synthèse* : alertes actives, jours avant saturation, VMs en contention, capacité récupérable, snapshots ; santé des objets (clusters, hôtes, datastores, VMs) ; alertes critiques et immédiates ; une carte par cluster (CPU, RAM, saturation, scores santé / risque / efficacité).
+  - *Capacité* : jours avant saturation par cluster (global, CPU, mémoire, disque), tendance CPU / RAM sur 24 h, 7 j ou 30 j, datastores.
+  - *Performance* : VMs en contention (CPU ready > 5 %, co-stop > 3 %, ballooning > 1 %, latence disque > 20 ms), hôtes ESXi avec cluster, santé, connexion et maintenance.
+  - *Optimisation* : vCPU et RAM récupérables, VMs sur- / sous-dimensionnées / inactives, plus gros snapshots.
+  - *Alertes* : toutes les alertes vROps actives, filtrables par niveau, impact (santé, risque, efficacité) et texte.
+- **Centre d'alertes** : seules les alertes vROps critiques et immédiates y remontent ; les avertissements restent dans l'onglet.
+- **Historique** : chaque collecte écrit la mesure InfluxDB `cluster_telemetry` (objet « Cluster » de l'Explorateur).
 - **Session** : jeton obtenu par `POST /suite-api/api/auth/token/acquire`, envoyé dans `Authorization: vRealizeOpsToken …`, puis libéré (`/auth/token/release`) en fin de cycle, même en cas d'échec.
-- **Compte** : rôle ReadOnly. Pour un compte d'annuaire déclaré dans vROps, saisir `SOURCE\utilisateur` (`SOURCE` = nom de la source d'authentification dans vROps).
-- **Fréquence** : vROps recalcule toutes les 5 minutes ; le répartiteur applique donc 5 minutes minimum à ce type, quel que soit l'intervalle global.
-- **Volume** : lecture des dernières valeurs en lot (500 objets par requête), pagination sur `totalCount`. Seule une liste de métriques utiles est collectée (`CLUSTER_KEYS`, `DATASTORE_KEYS`, `VM_KEYS`).
-- **Aucune valeur inventée** : une métrique que vROps ne renvoie pas reste vide, et la liste des clés absentes est signalée par une alerte « INFO » sur l'équipement. C'est le premier point à contrôler sur le vrai vROps : si une clé est nommée autrement dans votre version, il suffit de la corriger dans ces listes.
-- **Écran** : la fiche de l'équipement affiche les clusters, les datastores selon vROps et les recommandations de redimensionnement (filtrables). Les alertes vROps critiques, immédiates et avertissements rejoignent le centre d'alertes.
-- **Détection** : « Détecter » reconnaît vROps par `/suite-api/api/deployment/node/status`, seule ressource publique de la Suite API.
-- **Démo** : un vROps fictif est ajouté au mode démonstration, y compris sur une démo déjà initialisée.
+- **Compte** : rôle ReadOnly. Compte d'annuaire : `SOURCE\utilisateur` avec le nom court (ex. `LDAP\ZZZZHDNS`, pas l'adresse `@adcm.orangecm`).
+- **Fréquence** : 5 minutes minimum pour ce type (vROps ne recalcule pas plus vite), quel que soit l'intervalle global.
+- **Volume** : dernières valeurs lues en lot (500 objets par requête), pagination sur `totalCount`. Les propriétés de rattachement (cluster, vCenter, état) ne sont lues que pour les objets affichés ; si elles sont refusées, la collecte continue sans elles.
+- **Aucune valeur inventée** : une métrique que vROps ne renvoie pas reste vide. La liste des clés absentes est affichée dans « Diagnostic de collecte », en bas de l'onglet : c'est là qu'on voit si un nom de métrique diffère sur votre version (listes `*_KEYS` du collecteur).
+- **Démo** : un vROps fictif complet est ajouté au mode démonstration, y compris sur une démo déjà initialisée.
 
 ### Interface (réécrite de zéro)
 
