@@ -19,7 +19,7 @@ Volume=/etc/noc/ca:/certs:ro,z
 ReadOnly=true
 DropCapability=ALL
 NoNewPrivileges=true
-HealthCmd=curl -fs http://localhost:8000/health
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"
 HealthInterval=30s
 PodmanArgs=--memory=1g
 

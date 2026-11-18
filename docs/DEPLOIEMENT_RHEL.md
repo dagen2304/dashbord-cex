@@ -66,6 +66,17 @@ git clone https://github.com/dagen2304/dashbord-cex.git
 cd dashbord-cex && ./deploy/rhel/build-images.sh
 ```
 
+La machine de construction doit accéder, directement ou via un proxy, à :
+- **Docker Hub** (`registry-1.docker.io`, `auth.docker.io`) ;
+- **PyPI** (`pypi.org`, `files.pythonhosted.org`) ;
+- **npm** (`registry.npmjs.org`).
+
+Aucun miroir de paquets Linux (Debian, Alpine, RHEL) n'est nécessaire.
+
+Le script **teste d'abord ces accès**, avec 10 secondes maximum par site. S'il échoue, il s'arrête en expliquant la marche à suivre. Avec un proxy d'entreprise :
+- exportez `HTTPS_PROXY` (et `NO_PROXY`) avant de lancer le script ; il les transmet aux constructions ;
+- avec `docker`, déclarez aussi le proxy au démon Docker. La marche à suivre est affichée par le script.
+
 Le script produit `dist/noc-dashboard-<version>-rhel.tar.gz` et son empreinte `.sha256`. Le paquet contient les images de l'application, celles de PostgreSQL, InfluxDB et Redis en versions figées, les scripts et cette documentation.
 
 La version est lue dans le fichier `VERSION`. Pour une nouvelle livraison, incrémentez ce fichier, ou passez la version en argument : `./deploy/rhel/build-images.sh 3.0.1`.
