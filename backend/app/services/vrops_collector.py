@@ -35,7 +35,7 @@ MIN_INTERVAL_S = 300  # vROps recalcule ses métriques toutes les 5 minutes
 # Clés de statistiques vROps 8.x (adapterKind VMWARE) → champ du dashboard.
 # Plusieurs clés peuvent alimenter le même champ : la première renvoyée (dans l'ordre) l'emporte.
 # Le nom d'une métrique dépend du type d'objet (ex. l'usage CPU d'un cluster n'est pas
-# cpu|usage_average mais cpu|capacity_usagepct_average, vérifié sur vROps 8.10.2).
+# cpu|usage_average mais cpu|capacity_usagepct_average sur vROps 8.x).
 CLUSTER_KEYS = {
     "cpu|capacity_usagepct_average": "cpu_usage_pct",
     "cpu|usage_average": "cpu_usage_pct",
