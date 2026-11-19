@@ -33,7 +33,11 @@ logger = logging.getLogger(__name__)
 MIN_INTERVAL_S = 300  # vROps recalcule ses métriques toutes les 5 minutes
 
 # Clés de statistiques vROps 8.x (adapterKind VMWARE) → champ du dashboard.
+# Plusieurs clés peuvent alimenter le même champ : la première renvoyée (dans l'ordre) l'emporte.
+# Le nom d'une métrique dépend du type d'objet (ex. l'usage CPU d'un cluster n'est pas
+# cpu|usage_average mais cpu|capacity_usagepct_average, vérifié sur vROps 8.10.2).
 CLUSTER_KEYS = {
+    "cpu|capacity_usagepct_average": "cpu_usage_pct",
     "cpu|usage_average": "cpu_usage_pct",
     "cpu|demandPct": "cpu_demand_pct",
     "mem|usage_average": "ram_usage_pct",
@@ -74,6 +78,7 @@ VM_KEYS = {
     "cpu|costopPct": "cpu_costop_pct",
     "mem|balloonPct": "ram_balloon_pct",
     "virtualDisk|totalLatency": "disk_latency_ms",
+    "datastore|totalLatency": "disk_latency_ms",
     "diskspace|snapshot": "snapshot_gb",
 }
 # Propriétés lues seulement pour les objets affichés (rattachement, état).
@@ -220,20 +225,26 @@ class VRopsCollector(BaseCollector):
         self.diagnostics: List[str] = []
         objs = {kind: self._resources(session, kind) for kind in KINDS}
         by_id = {o["id"]: o for rows in objs.values() for o in rows}
-        seen_keys: set = set()
+        missing: List[str] = []
 
         def table(kind: str, keys: Dict[str, str]) -> List[Dict[str, Any]]:
             rows = objs[kind]
             stats = self._latest_stats(session, [o["id"] for o in rows], keys) if rows else {}
-            out = []
+            out, filled = [], set()
             for o in rows:
                 values = stats.get(o["id"], {})
-                seen_keys.update(values)
                 row: Dict[str, Any] = {"id": o["id"], "name": o["name"], "color": o["color"]}
                 for key, field in keys.items():
-                    if key in values:
+                    if field not in row and key in values:
                         row[field] = round(values[key], 2)
+                        filled.add(field)
                 out.append(row)
+            # Contrôle PAR TYPE d'objet : une clé renvoyée pour les hôtes ne prouve rien pour les clusters.
+            if rows:
+                for field in dict.fromkeys(keys.values()):
+                    if field not in filled:
+                        candidates = " ou ".join(k for k, f in keys.items() if f == field)
+                        missing.append(f"{KINDS[kind]} : {candidates}")
             return out
 
         clusters = table("ClusterComputeResource", CLUSTER_KEYS)
@@ -285,6 +296,15 @@ class VRopsCollector(BaseCollector):
 
         for c in clusters:
             c["vcenter"] = parent(c["id"], "summary|parentVcenter")
+        # Même nom de cluster dans deux vCenter : nom complété pour rester unique (tableaux, historique).
+        counts_by_name: Dict[str, int] = {}
+        for c in clusters:
+            counts_by_name[c["name"]] = counts_by_name.get(c["name"], 0) + 1
+        for c in clusters:
+            if counts_by_name[c["name"]] > 1:
+                c["name"] = f'{c["name"]} ({c.get("vcenter") or c["id"][:8]})'
+        for c in clusters:
+            by_id[c["id"]]["name"] = c["name"]  # alertes : même nom que dans les tableaux
         for h in hosts:
             h["cluster"] = parent(h["id"], "summary|parentCluster")
             h["connection"] = parent(h["id"], "runtime|connectionState")
@@ -322,12 +342,6 @@ class VRopsCollector(BaseCollector):
         health_summary = {KINDS[k]: {c: sum(1 for o in rows if o["color"] == c) for c in HEALTH_COLORS}
                           for k, rows in objs.items()}
 
-        expected = set()
-        for kind, keys in (("ClusterComputeResource", CLUSTER_KEYS), ("HostSystem", HOST_KEYS),
-                           ("Datastore", DATASTORE_KEYS), ("VirtualMachine", VM_KEYS)):
-            if objs[kind]:
-                expected |= set(keys)
-        missing = sorted(expected - seen_keys)
 
         status = "HEALTHY"
         days = metrics.get("capacity_time_remaining_days")

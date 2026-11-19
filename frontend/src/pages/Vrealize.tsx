@@ -46,7 +46,7 @@ function Days({ value }: { value?: number }) {
   return (
     <span className={clsx('num inline-flex items-center gap-1', tone)}>
       {value < 30 ? <AlertTriangle className="size-3.5" aria-hidden /> : null}
-      {value >= 365 ? '> 1 an' : fmt(value, 0, 'j')}
+      {value <= 0 ? 'Saturé' : value >= 365 ? '> 1 an' : fmt(value, 0, 'j')}
     </span>
   )
 }
@@ -196,7 +196,7 @@ function Synthese({ d, onView }: { d: DeviceState; onView: (v: View) => void }) 
           value={fmt((m.alerts_critical ?? 0) + (m.alerts_immediate ?? 0) + (m.alerts_warning ?? 0), 0)}
           sub={`${fmt(m.alerts_critical, 0)} critique(s) · ${fmt(m.alerts_immediate, 0)} immédiate(s) · ${fmt(m.alerts_warning, 0)} avert.`} />
         <Stat icon={Timer} label="Avant saturation" tone={days === undefined ? 'nodata' : days < 30 ? 'crit' : days < 90 ? 'warn' : 'ok'}
-          value={days === undefined ? '—' : days >= 365 ? '> 1 an' : fmt(days, 0, 'j')} sub="Objet le plus proche de la saturation" />
+          value={days === undefined ? '—' : days <= 0 ? 'Saturé' : days >= 365 ? '> 1 an' : fmt(days, 0, 'j')} sub="Objet le plus proche de la saturation" />
         <Stat icon={Cpu} label="VMs en contention" tone={m.vms_contention ? 'warn' : 'ok'} value={fmt(m.vms_contention, 0)}
           sub={`sur ${fmt(m.vms_total, 0)} VMs`} />
         <Stat icon={Gauge} label="Récupérable" value={`${fmt(m.reclaimable_vcpus, 0)} vCPU`}
@@ -589,10 +589,10 @@ function Diagnostics({ d }: { d: DeviceState }) {
       <summary className="cursor-pointer text-fg-2">Diagnostic de collecte ({missing.length + notes.length})</summary>
       {notes.map((n) => <p key={n} className="mt-2">{n}</p>)}
       {missing.length ? (
-        <p className="mt-2">
-          Métriques non fournies par ce vROps (champs laissés vides, aucune valeur inventée) :{' '}
-          <span className="font-mono">{missing.join(', ')}</span>
-        </p>
+        <div className="mt-2">
+          <p>Métriques non fournies par ce vROps (champs laissés vides, aucune valeur inventée) :</p>
+          <ul className="mt-1 list-disc pl-5 font-mono">{missing.map((m) => <li key={m}>{m}</li>)}</ul>
+        </div>
       ) : null}
     </details>
   )

@@ -180,6 +180,8 @@ Nouveau type d'équipement **« VMware vRealize Operations »** (`VROPS`), colle
 - **Compte** : rôle ReadOnly. Compte d'annuaire : `SOURCE\utilisateur` avec le nom court (ex. `LDAP\ZZZZHDNS`, pas l'adresse `@adcm.orangecm`).
 - **Fréquence** : 5 minutes minimum pour ce type (vROps ne recalcule pas plus vite), quel que soit l'intervalle global.
 - **Volume** : dernières valeurs lues en lot (500 objets par requête), pagination sur `totalCount`. Les propriétés de rattachement (cluster, vCenter, état) ne sont lues que pour les objets affichés ; si elles sont refusées, la collecte continue sans elles.
+- **Noms de métriques selon le type d'objet** : plusieurs clés possibles par champ, la première renvoyée l'emporte (ex. usage CPU d'un cluster : `cpu|capacity_usagepct_average`, d'un hôte : `cpu|usage_average`). Le contrôle des clés absentes se fait par type d'objet.
+- **Clusters homonymes** dans deux vCenter : le nom est complété par le vCenter, ex. `CLT_AGENCES (vCenterNDG)`.
 - **Aucune valeur inventée** : une métrique que vROps ne renvoie pas reste vide. La liste des clés absentes est affichée dans « Diagnostic de collecte », en bas de l'onglet : c'est là qu'on voit si un nom de métrique diffère sur votre version (listes `*_KEYS` du collecteur).
 - **Démo** : un vROps fictif complet est ajouté au mode démonstration, y compris sur une démo déjà initialisée.
 

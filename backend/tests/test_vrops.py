@@ -16,7 +16,7 @@ RESOURCES = {
     "VirtualMachine": [(f"vm{i}", f"VM-{i:03d}") for i in range(5)],
 }
 STATS = {
-    "c1": {"cpu|usage_average": 61.25, "mem|usage_average": 78.5, "OnlineCapacityAnalytics|timeRemaining": 120,
+    "c1": {"cpu|capacity_usagepct_average": 61.25, "cpu|usage_average": 99.0, "mem|usage_average": 78.5, "OnlineCapacityAnalytics|timeRemaining": 120,
            "OnlineCapacityAnalytics|capacityRemainingPercentage": 22, "badge|health": 100, "badge|risk": 25,
            "badge|efficiency": 50, "summary|number_running_vms": 3},
     "c2": {"cpu|usage_average": 12.0, "mem|usage_average": 30.0, "OnlineCapacityAnalytics|timeRemaining": 365},
@@ -155,6 +155,7 @@ def test_metrics_capacity_rightsizing_and_alerts():
     assert m["datastores_usage_pct"] == round(8704 / 12288 * 100, 1)
 
     prod = next(c for c in payload["clusters_metrics"] if c["name"] == "CL-PROD")
+    # Clé propre aux clusters prioritaire sur cpu|usage_average (99 ignoré).
     assert prod == {"name": "CL-PROD", "color": "GREEN", "vcenter": "vcsa-prod", "cpu_usage_pct": 61.25,
                     "ram_usage_pct": 78.5, "time_remaining_days": 120, "capacity_remaining_pct": 22, "health": 100,
                     "risk": 25, "efficiency": 50, "running_vms": 3}
@@ -203,8 +204,12 @@ def test_alerts_center_and_tab():
 def test_missing_stat_keys_are_reported_not_invented():
     payload = _run(FakeSuiteApi())
     missing = payload["vrops_missing_keys"]
-    assert "badge|health" not in missing                     # fourni pour au moins un objet
-    assert "summary|undersized|memory" in missing            # jamais fourni
+    assert not any("badge|health" in m for m in missing if m.startswith("Cluster"))   # fourni pour un cluster
+    assert "VM : summary|undersized|memory" in missing                              # jamais fourni
+    # Contrôle par type : cpu|usage_average est fourni pour les hôtes, pas pour les datastores ni les VMs…
+    assert not any(m.startswith("Hôte : cpu|usage_average") for m in missing)
+    # … et un champ à plusieurs clés possibles n'est signalé que si aucune n'est fournie.
+    assert "VM : virtualDisk|totalLatency ou datastore|totalLatency" not in missing
     assert not any(a["severity"] == "INFO" for a in payload["alerts"])   # plus de bruit dans le centre d'alertes
 
 
@@ -248,3 +253,24 @@ def test_minimum_interval_for_vrops():
 def test_vrops_is_a_declared_vendor(client, admin_headers):
     vendors = {v["device_type"]: v for v in client.get("/api/inventory/vendors", headers=admin_headers).json()}
     assert vendors["VROPS"]["port"] == 443
+
+
+def test_cluster_cpu_missing_is_reported_per_type(monkeypatch):
+    """Régression : l'usage CPU des clusters manquait sans être signalé (clé fournie pour les hôtes)."""
+    monkeypatch.setitem(STATS, "c1", {"mem|usage_average": 50.0})
+    monkeypatch.setitem(STATS, "c2", {"mem|usage_average": 40.0})
+    payload = _run(FakeSuiteApi())
+    assert "Cluster : cpu|capacity_usagepct_average ou cpu|usage_average" in payload["vrops_missing_keys"]
+
+
+def test_disk_latency_fallback_key(monkeypatch):
+    monkeypatch.setitem(STATS, "vm3", {"datastore|totalLatency": 45.0})
+    payload = _run(FakeSuiteApi())
+    assert payload["vm_contention"][0]["disk_latency_ms"] == 45.0
+
+
+def test_duplicate_cluster_names_are_made_unique(monkeypatch):
+    monkeypatch.setitem(RESOURCES, "ClusterComputeResource", [("c1", "CLT_AGENCES"), ("c2", "CLT_AGENCES")])
+    monkeypatch.setitem(PROPS, "c2", {"summary|parentVcenter": "vcsa-ndg"})
+    payload = _run(FakeSuiteApi())
+    assert sorted(c["name"] for c in payload["clusters_metrics"]) == ["CLT_AGENCES (vcsa-ndg)", "CLT_AGENCES (vcsa-prod)"]
