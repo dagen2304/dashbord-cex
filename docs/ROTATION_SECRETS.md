@@ -66,7 +66,7 @@ Suivez cet ordre : le backend refuse désormais de démarrer tant que `SECRET_KE
 
 4. **`DOCKER_INFLUXDB_INIT_PASSWORD`** : changez le mot de passe de l'utilisateur admin InfluxDB (`influx user password`).
 
-5. **`INTERNAL_API_KEY`** : à régénérer, même si elle n'est pas encore utilisée par le code.
+5. **`JWT_SECRET`** (nouveau en v3) : signe les sessions des utilisateurs. Générez-le comme les autres ; il doit être différent de `SECRET_KEY`. Le changer déconnecte tous les utilisateurs, sans autre conséquence. `INTERNAL_API_KEY` n’est plus utilisée : supprimez-la.
 
 6. Redémarrez la plateforme :
 
@@ -80,7 +80,7 @@ Suivez cet ordre : le backend refuse désormais de démarrer tant que `SECRET_KE
 - [ ] Mot de passe PostgreSQL changé (base + `.env`)
 - [ ] Jeton InfluxDB recréé, ancien supprimé
 - [ ] Mot de passe admin InfluxDB changé
-- [ ] `INTERNAL_API_KEY` régénérée
+- [ ] `JWT_SECRET` créé (différent de `SECRET_KEY`), `INTERNAL_API_KEY` supprimée
 - [ ] Plateforme redémarrée, collecte vérifiée (`docker compose logs -f celery_worker`)
 
 ## 3. Après la rotation

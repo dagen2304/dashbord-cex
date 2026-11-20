@@ -1,0 +1,17 @@
+# Flux sortants du serveur NOC à vérifier (hôte  port  usage). Exemples à adapter.
+# vCenter (API vSphere)
+vcenter80-mkp.adcm.orangecm      443   vcenter
+# Huawei Dorado (API REST)
+dorado.makepe.storage.adcm.orangecm  8088  dorado
+# Dell Unity / PowerStore / Scality (HTTPS)
+172.26.33.114                    443   unity
+# DataDomain (API REST)
+dd01.adcm.orangecm               3009  datadomain
+# NetBackup (API REST)
+nbu-primary.adcm.orangecm        1556  netbackup
+# Veritas Access (SSH)
+va01.adcm.orangecm               22    veritas
+# Active Directory (LDAPS)
+dc01.adcm.orangecm               636   active-directory
+# Relais SMTP
+smtp.adcm.orangecm               25    smtp

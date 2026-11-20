@@ -1,0 +1,108 @@
+@import '@fontsource/fira-sans/400.css';
+@import '@fontsource/fira-sans/500.css';
+@import '@fontsource/fira-sans/600.css';
+@import '@fontsource/fira-code/400.css';
+@import '@fontsource/fira-code/500.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Jetons de design (UI UX Pro Max — style « Minimalism & Swiss », densité tableau de bord).
+ * Accent = orange de la charte Orange. Couleurs de statut réservées (jamais utilisées pour
+ * une série de graphique) et toujours accompagnées d'une icône et d'un libellé.
+ * Couleurs de séries validées (skill dataviz) sur chaque fond.
+ */
+:root,
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: 15 23 42;            /* #0F172A */
+  --surface: 27 35 54;       /* #1B2336 */
+  --surface-2: 39 47 66;     /* #272F42 */
+  --border: 51 65 85;        /* #334155 */
+  --fg: 248 250 252;         /* #F8FAFC */
+  --fg-2: 203 213 225;       /* #CBD5E1 */
+  --muted: 148 163 184;      /* #94A3B8 — 6,6:1 sur surface */
+  --accent: 255 121 0;       /* #FF7900 orange marque */
+  --on-accent: 0 0 0;
+  --ring: 255 176 102;       /* #FFB066 — focus visible sur fond sombre */
+  --ok: 12 163 12;           /* #0CA30C */
+  --warn: 250 178 25;        /* #FAB219 */
+  --crit: 232 76 76;         /* #E84C4C — ≥ 3:1 sur surface sombre */
+  --nodata: 100 116 139;     /* #64748B */
+  --series-1: 57 135 229;    /* #3987E5 */
+  --series-2: 217 89 38;     /* #D95926 */
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --bg: 241 245 249;         /* #F1F5F9 */
+  --surface: 255 255 255;
+  --surface-2: 241 245 249;
+  --border: 203 213 225;     /* #CBD5E1 */
+  --fg: 15 23 42;
+  --fg-2: 51 65 85;
+  --muted: 71 85 105;        /* #475569 — 7,6:1 sur blanc */
+  --accent: 241 110 0;       /* #F16E00 orange accessible */
+  --on-accent: 0 0 0;
+  --ring: 196 82 0;
+  --ok: 10 133 10;
+  --warn: 202 138 4;
+  --crit: 208 59 59;         /* #D03B3B */
+  --nodata: 100 116 139;
+  --series-1: 42 120 214;    /* #2A78D6 */
+  --series-2: 235 104 52;    /* #EB6834 */
+}
+
+@layer base {
+  html {
+    font-size: 15px;
+  }
+  body {
+    @apply bg-bg text-fg font-sans antialiased;
+    font-feature-settings: 'tnum' 1; /* chiffres tabulaires : les colonnes ne « dansent » pas */
+  }
+  :focus-visible {
+    outline: 2px solid rgb(var(--ring));
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: rgb(var(--accent) / 0.35);
+  }
+  dialog::backdrop {
+    background: rgb(2 6 23 / 0.65);
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-lg border border-border bg-surface;
+  }
+  .num {
+    @apply font-mono tabular-nums;
+  }
+  .table-base {
+    @apply w-full text-left text-sm;
+  }
+  .table-base th {
+    @apply sticky top-0 z-10 bg-surface px-3 py-2 text-2xs font-medium uppercase tracking-wide text-muted border-b border-border;
+  }
+  .table-base td {
+    @apply px-3 py-2 border-b border-border/60 align-middle;
+  }
+  .table-base tbody tr {
+    @apply transition-colors hover:bg-surface-2/60;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

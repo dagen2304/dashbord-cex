@@ -1,156 +1,95 @@
-import pandas as pd
-import numpy as np
-from datetime import datetime, timedelta
-from typing import Dict, Any, List
+"""
+Analyse capacitaire : variations semaine/mois et projection de saturation.
+
+Projection linéaire sur 30 jours, uniquement pour les ressources cumulatives (volumétrie).
+Pour CPU/RAM (ressources instantanées), une « date de saturation » n'a pas de sens :
+`days_to_full` vaut None.
+"""
 import logging
+import math
+from datetime import timedelta
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+import pandas as pd
 
 logger = logging.getLogger(__name__)
 
+# Ressources dont l'usage s'accumule dans le temps (projection pertinente).
+CUMULATIVE_UNITS = {"TB", "GB"}
+# Au-delà, la projection n'a pas de sens opérationnel (pente ≈ bruit de mesure) : « stable ».
+MAX_PROJECTION_DAYS = 3650
+
+
+def _severity(usage_pct: Optional[float], days_to_full: Optional[int]) -> str:
+    if (days_to_full is not None and days_to_full < 90) or (usage_pct is not None and usage_pct >= 90):
+        return "CRITICAL"
+    if (days_to_full is not None and days_to_full < 180) or (usage_pct is not None and usage_pct >= 80):
+        return "WARNING"
+    return "HEALTHY"
+
+
+def _empty() -> Dict[str, Any]:
+    return {
+        "capacity_total_tb": None, "capacity_used_tb": None, "capacity_free_tb": None, "usage_pct": None,
+        "w2w_diff_tb": None, "w2w_growth_pct": None, "mom_diff_tb": None, "mom_growth_pct": None,
+        "growth_per_day_tb": None, "days_to_full": None, "severity": "HEALTHY", "points": 0,
+    }
+
+
+def _growth(curr: pd.Series, prev: pd.Series) -> tuple[Optional[float], Optional[float]]:
+    if curr.empty or prev.empty:
+        return None, None
+    diff = float(curr.mean() - prev.mean())
+    base = float(prev.mean())
+    return round(diff, 2), (round(diff / base * 100, 2) if base > 0 else None)
+
+
 class CapacityAnalyticsService:
-    """
-    Service d'analyse de tendance et de prédiction capacitaire (Espace disque, CPU, RAM).
-    Utilise Pandas pour le calcul statistique et la régression linéaire prédictive.
-    """
 
     @staticmethod
-    def calculate_trends(history_points: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Calcule les variations W2W, MoM et projette la saturation (Time-to-Full).
-        Chaque point de history_points doit être de la forme :
-        {"timestamp": datetime, "used_tb": float, "total_tb": float}
-        """
+    def calculate_trends(history_points: List[Dict[str, Any]], unit: str = "TB") -> Dict[str, Any]:
+        """`history_points` : [{"timestamp": datetime, "used_tb": float, "total_tb": float}, ...]"""
         if not history_points:
-            logger.warning("Pas assez de points d'historique pour l'analyse capacitaire")
-            return CapacityAnalyticsService._get_empty_analysis()
+            return _empty()
 
-        # 1. Charger dans un DataFrame Pandas
         df = pd.DataFrame(history_points)
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        df['used_tb'] = df['used_tb'].astype(float)
-        df['total_tb'] = df['total_tb'].astype(float)
-        
-        # Calculer le pourcentage d'utilisation
-        df['usage_pct'] = (df['used_tb'] / df['total_tb']) * 100
-        
-        # Trier par timestamp
-        df = df.sort_values(by='timestamp').reset_index(drop=True)
-        
-        latest_point = df.iloc[-1]
-        capacity_total = latest_point['total_tb']
-        capacity_used = latest_point['used_tb']
-        capacity_free = capacity_total - capacity_used
-        usage_pct = latest_point['usage_pct']
+        df["timestamp"] = pd.to_datetime(df["timestamp"])
+        df = df.sort_values("timestamp").reset_index(drop=True)
 
-        if len(history_points) < 5:
-            # S'il y a au moins un point, on renvoie la capacité actuelle, avec 0 pour les prédictions
-            empty_analysis = CapacityAnalyticsService._get_empty_analysis()
-            empty_analysis.update({
-                "capacity_total_tb": round(capacity_total, 1),
-                "capacity_used_tb": round(capacity_used, 1),
-                "capacity_free_tb": round(capacity_free, 1),
-                "usage_pct": round(usage_pct, 1),
-            })
-            return empty_analysis
+        last = df.iloc[-1]
+        total, used = float(last["total_tb"]), float(last["used_tb"])
+        result = _empty()
+        result.update(
+            capacity_total_tb=round(total, 2),
+            capacity_used_tb=round(used, 2),
+            capacity_free_tb=round(max(0.0, total - used), 2),
+            usage_pct=round(used / total * 100, 1) if total > 0 else None,
+            points=len(df),
+        )
 
-        # 2. Séparer les plages temporelles pour W2W et MoM
-        now = df['timestamp'].max()
-        
-        # Plages W (derniers 7 jours) et W-1 (jours 8 à 14)
-        week_curr = df[df['timestamp'] >= (now - timedelta(days=7))]
-        week_prev = df[(df['timestamp'] >= (now - timedelta(days=14))) & (df['timestamp'] < (now - timedelta(days=7)))]
-        
-        # Plages M (derniers 30 jours) et M-1 (jours 31 à 60)
-        month_curr = df[df['timestamp'] >= (now - timedelta(days=30))]
-        month_prev = df[(df['timestamp'] >= (now - timedelta(days=60))) & (df['timestamp'] < (now - timedelta(days=30)))]
+        now = df["timestamp"].max()
+        def window(a: int, b: int) -> pd.Series:
+            return df[(df["timestamp"] > now - timedelta(days=b)) & (df["timestamp"] <= now - timedelta(days=a))]["used_tb"]
 
-        # 3. Calculs W2W (Week-over-Week)
-        w2w_diff_tb = 0.0
-        w2w_growth_pct = 0.0
-        if not week_curr.empty and not week_prev.empty:
-            avg_w_curr = week_curr['used_tb'].mean()
-            avg_w_prev = week_prev['used_tb'].mean()
-            w2w_diff_tb = avg_w_curr - avg_w_prev
-            if avg_w_prev > 0:
-                w2w_growth_pct = (w2w_diff_tb / avg_w_prev) * 100
+        result["w2w_diff_tb"], result["w2w_growth_pct"] = _growth(window(0, 7), window(7, 14))
+        result["mom_diff_tb"], result["mom_growth_pct"] = _growth(window(0, 30), window(30, 60))
 
-        # 4. Calculs MoM (Month-over-Month)
-        mom_diff_tb = 0.0
-        mom_growth_pct = 0.0
-        if not month_curr.empty and not month_prev.empty:
-            avg_m_curr = month_curr['used_tb'].mean()
-            avg_m_prev = month_prev['used_tb'].mean()
-            mom_diff_tb = avg_m_curr - avg_m_prev
-            if avg_m_prev > 0:
-                mom_growth_pct = (mom_diff_tb / avg_m_prev) * 100
-
-        # 5. Algorithme de Projection Linéaire (Time-to-Full)
-        # On projette en utilisant les données des 30 derniers jours
-        days_to_full = 9999  # Code pour dire "infini" ou "pas de saturation prévisible"
-        growth_per_day = 0.0
-        
-        if len(month_curr) >= 3:
-            # Convertir les dates en secondes écoulées pour la régression linéaire
-            x = (month_curr['timestamp'] - month_curr['timestamp'].min()).dt.total_seconds().values
-            y = month_curr['used_tb'].values
-            
+        month = df[df["timestamp"] > now - timedelta(days=30)]
+        span_days = (month["timestamp"].max() - month["timestamp"].min()).total_seconds() / 86400 if len(month) else 0
+        # Projection seulement avec assez de recul (≥ 3 jours, ≥ 5 points) et pour une ressource cumulative.
+        if unit in CUMULATIVE_UNITS and len(month) >= 5 and span_days >= 3:
+            x = (month["timestamp"] - month["timestamp"].min()).dt.total_seconds().to_numpy() / 86400
+            y = month["used_tb"].to_numpy(dtype=float)
             try:
-                # Ajustement polynomial du premier degré (y = ax + b)
-                # a est la pente en TB par seconde
-                slope_s, intercept = np.polyfit(x, y, 1)
-                
-                # Pente en TB par jour (1 jour = 86400 secondes)
-                growth_per_day = slope_s * 86400
-                
-                # S'assurer que le résultat n'est pas NaN
-                import math
-                if math.isnan(growth_per_day):
-                    growth_per_day = 0.0
-                
-                if growth_per_day > 0.001:
-                    # Jours restants avant saturation
-                    days_to_full = int(capacity_free / growth_per_day)
-                    if days_to_full < 0:
-                        days_to_full = 9999
-                else:
-                    days_to_full = 9999  # Tendance stable ou descendante
-            except Exception as poly_err:
-                logger.warning(f"Impossible de calculer la tendance linéaire: {poly_err}")
-                growth_per_day = 0.0
-                days_to_full = 9999
-                
-        # Classer le niveau de criticité capacitaire
-        severity = "HEALTHY"
-        if days_to_full < 90:
-            severity = "CRITICAL"
-        elif days_to_full < 180:
-            severity = "WARNING"
+                slope, _ = np.polyfit(x, y, 1)
+                if not math.isnan(slope):
+                    result["growth_per_day_tb"] = round(float(slope), 4)
+                    free = max(0.0, total - used)
+                    if slope > 1e-4 and total > 0 and free / slope <= MAX_PROJECTION_DAYS:
+                        result["days_to_full"] = int(free / slope)
+            except (np.linalg.LinAlgError, ValueError) as exc:
+                logger.warning("Projection capacitaire impossible : %s", exc)
 
-        return {
-            "capacity_total_tb": round(capacity_total, 1),
-            "capacity_used_tb": round(capacity_used, 1),
-            "capacity_free_tb": round(capacity_free, 1),
-            "usage_pct": round(usage_pct, 1),
-            "w2w_diff_tb": round(w2w_diff_tb, 2),
-            "w2w_growth_pct": round(w2w_growth_pct, 2),
-            "mom_diff_tb": round(mom_diff_tb, 2),
-            "mom_growth_pct": round(mom_growth_pct, 2),
-            "growth_per_day_tb": round(growth_per_day, 3),
-            "days_to_full": days_to_full,
-            "severity": severity
-        }
-
-    @staticmethod
-    def _get_empty_analysis() -> Dict[str, Any]:
-        return {
-            "capacity_total_tb": 0.0,
-            "capacity_used_tb": 0.0,
-            "capacity_free_tb": 0.0,
-            "usage_pct": 0.0,
-            "w2w_diff_tb": 0.0,
-            "w2w_growth_pct": 0.0,
-            "mom_diff_tb": 0.0,
-            "mom_growth_pct": 0.0,
-            "growth_per_day_tb": 0.0,
-            "days_to_full": 9999,
-            "severity": "HEALTHY"
-        }
+        result["severity"] = _severity(result["usage_pct"], result["days_to_full"])
+        return result

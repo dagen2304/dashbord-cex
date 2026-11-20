@@ -1,0 +1,29 @@
+[Unit]
+Description=NOC INFRA — Redis (cache temps réel, file de tâches)
+
+[Container]
+ContainerName=noc-redis
+Image=docker.io/library/redis:7.4.12-alpine
+Network=noc.network
+# Mot de passe : fichier « requirepass … » monté depuis un podman secret (jamais dans la
+# ligne de commande, visible par « ps »). redis-cli s'authentifie via REDISCLI_AUTH.
+Secret=noc_redis_conf,type=mount,target=/run/secrets/redis.conf,uid=999,gid=999,mode=0400
+Secret=noc_redis_password,type=env,target=REDISCLI_AUTH
+Exec=redis-server /run/secrets/redis.conf --save "" --appendonly no --maxmemory 256mb --maxmemory-policy volatile-lru
+User=999
+Group=999
+ReadOnly=true
+Tmpfs=/data:rw,mode=1777
+# Point de montage du secret (racine en lecture seule).
+Tmpfs=/run/secrets:rw,mode=0755
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=redis-cli ping
+HealthInterval=30s
+PodmanArgs=--memory=320m
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

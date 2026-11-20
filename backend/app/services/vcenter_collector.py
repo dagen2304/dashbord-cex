@@ -1,9 +1,10 @@
-import ssl
 import logging
 from typing import Dict, Any
 from pyVmomi import vim, vmodl
 from pyVim.connect import SmartConnect, Disconnect
 from app.services.base_collector import BaseCollector
+from app.services.tls import vsphere_connect_kwargs
+from app.services.vsphere_perf import datastore_latencies, datastore_uuid, vm_latencies
 
 logger = logging.getLogger(__name__)
 
@@ -99,10 +100,8 @@ class VCenterCollector(BaseCollector):
 
         si = None
         try:
-            # Contexte SSL — désactive la vérification pour les certificats auto-signés
-            ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
+            # Vérification du certificat selon la politique de l'équipement (verify / pin / insecure).
+            tls_kwargs = vsphere_connect_kwargs(self.tls_policy, self.device_name)
 
             logger.info(f"[vCenter] 🔌 Tentative de connexion sécurisée à l'équipement {host}:{port} (User: {user})")
             si = SmartConnect(
@@ -110,7 +109,7 @@ class VCenterCollector(BaseCollector):
                 port=port,
                 user=user,
                 pwd=password,
-                sslContext=ssl_context,
+                **tls_kwargs,
             )
             # Note : pas d'atexit.register — le bloc finally ci-dessous gère la déconnexion proprement
             logger.info(f"[vCenter] ✅ Connexion réussie à {host}. Démarrage de la collecte PropertyCollector (ultra-rapide).")
@@ -215,6 +214,7 @@ class VCenterCollector(BaseCollector):
             vms_data = self._collect_properties(si, [vim.VirtualMachine], vm_props)
             vms_total = len(vms_data)
             vms_active = 0
+            powered_on_vms = []  # (objet VM, entrée) : pour rattacher les latences mesurées
             vms_metrics_list = []
             vms_fs_metrics = []
             
@@ -256,9 +256,7 @@ class VCenterCollector(BaseCollector):
                                 
                     storage_gb = round(storage_kb / (1024**2), 1)
                     
-                    # Latences disque VM non collectées : elles étaient simulées au hasard.
-                    # Ne pas les réintroduire avant une vraie collecte via PerformanceManager.
-                    vms_metrics_list.append({
+                    vm_entry = {
                         "vm_name": vm.get('name', 'Unknown'),
                         "vcenter": host,
                         "cluster": h_info['cluster'],
@@ -267,7 +265,9 @@ class VCenterCollector(BaseCollector):
                         "storage_gb": storage_gb,
                         "os": vm.get('guest.guestFullName') or "Unknown OS",
                         "ip": vm.get('guest.ipAddress') or "N/A"
-                    })
+                    }
+                    vms_metrics_list.append(vm_entry)
+                    powered_on_vms.append((vm.get('obj'), vm_entry))
                     
                     # File systems internes de la VM
                     guest_disks = vm.get('guest.disk')
@@ -294,12 +294,13 @@ class VCenterCollector(BaseCollector):
 
             # ── 3. Datastores ─────────────────────────────────────────────
             logger.info(f"[vCenter] Collecte des Datastores...")
-            ds_props = ['name', 'summary.accessible', 'summary.capacity', 'summary.freeSpace']
+            ds_props = ['name', 'summary.accessible', 'summary.capacity', 'summary.freeSpace', 'summary.url']
             ds_data = self._collect_properties(si, [vim.Datastore], ds_props)
             
             ds_total_bytes = 0
             ds_free_bytes = 0
             ds_metrics_list = []
+            ds_uuid_to_name = {}
 
             for ds in ds_data:
                 if ds.get('summary.accessible'):
@@ -311,9 +312,9 @@ class VCenterCollector(BaseCollector):
                     ds_used = ds_cap - ds_free
                     ds_usage_pct = round((ds_used / ds_cap * 100), 1) if ds_cap > 0 else 0.0
                     
-                    # Pas de "latency_ms" : la valeur était simulée au hasard et déclenchait
-                    # de fausses alertes e-mail. À réintroduire uniquement via
-                    # si.content.perfManager.QueryPerf() (datastore.totalReadLatency.average).
+                    uuid = datastore_uuid(ds.get('summary.url'))
+                    if uuid:
+                        ds_uuid_to_name[uuid] = ds.get('name', 'Unknown')
                     ds_metrics_list.append({
                         "datastore_name": ds.get('name', 'Unknown'),
                         "capacity_tb": round(ds_cap / (1024**4), 2),
@@ -326,8 +327,37 @@ class VCenterCollector(BaseCollector):
             ds_used_tb = round(ds_used_bytes / (1024 ** 4), 2)
             ds_usage_pct = round((ds_used_bytes / ds_total_bytes * 100), 1) if ds_total_bytes > 0 else 0.0
 
-            # ── 5. Alertes de santé ───────────────────────────────────────
+            # ── 4. Latences disque réelles (PerformanceManager) ───────────
             alerts = []
+            latency_max_ms = None
+            try:
+                perf = si.content.perfManager
+                connected_hosts = [h.get('obj') for h in hosts_data
+                                   if h.get('runtime.connectionState') == vim.HostSystem.ConnectionState.connected]
+                ds_lat = datastore_latencies(perf, connected_hosts, ds_uuid_to_name)
+                for entry in ds_metrics_list:
+                    lat = ds_lat.get(entry["datastore_name"])
+                    if lat:
+                        entry.update(lat)
+                        entry["latency_ms"] = max(lat.values())
+                measured = [e["latency_ms"] for e in ds_metrics_list if "latency_ms" in e]
+                latency_max_ms = max(measured) if measured else None
+
+                vm_lat = vm_latencies(perf, [obj for obj, _ in powered_on_vms if obj is not None])
+                for obj, entry in powered_on_vms:
+                    if obj in vm_lat:
+                        entry.update(vm_lat[obj])
+                logger.info(f"[vCenter] Latences mesurées : {len(measured)} datastore(s), {len(vm_lat)} VM(s)")
+            except Exception as perf_err:
+                # Sans latence, le reste de la collecte reste valable : on le signale, sans inventer de valeur.
+                logger.warning(f"[vCenter] Latences non collectées sur {host} : {perf_err}")
+                alerts.append({
+                    "severity": "INFO",
+                    "message": f"Latences disque non collectées (PerformanceManager) : {type(perf_err).__name__}",
+                    "component": "PerformanceManager",
+                })
+
+            # ── 5. Alertes de santé ───────────────────────────────────────
             status = "HEALTHY"
 
             if cpu_usage_pct > 85:
@@ -364,6 +394,7 @@ class VCenterCollector(BaseCollector):
                 "datastores_total_tb": ds_total_tb,
                 "datastores_used_tb": ds_used_tb,
                 "datastores_usage_pct": ds_usage_pct,
+                **({"latency_ms": latency_max_ms} if latency_max_ms is not None else {}),
             }
             payload["vms_metrics"] = vms_metrics_list
             payload["hosts_metrics"] = hosts_metrics_list
