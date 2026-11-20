@@ -23,8 +23,8 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 VERSION=${1:-$(cat "$ROOT/VERSION")}
 ENGINE=${ENGINE:-$(command -v podman >/dev/null && echo podman || echo docker)}
 THIRD_PARTY=(
-    docker.io/library/postgres:15.10-alpine
-    docker.io/library/influxdb:2.7.11-alpine
+    docker.io/library/postgres:15.20-alpine
+    docker.io/library/influxdb:2.7.12-alpine
     docker.io/library/redis:7.4.12-alpine
 )
 OUT="$ROOT/dist"

@@ -30,10 +30,16 @@ def _fail_key(username: str, ip: str) -> str:
     return f"noc_login_fail:{username.lower()}:{ip}"
 
 
-def _is_locked(key: str) -> bool:
+def _ip_key(ip: str) -> str:
+    """Échecs d'une adresse, tous identifiants confondus : bloque la « pulvérisation » de
+    mots de passe (quelques essais sur de nombreux comptes, notamment des comptes AD)."""
+    return f"noc_login_fail_ip:{ip}"
+
+
+def _is_locked(key: str, limit: int | None = None) -> bool:
     try:
         count = r_client.get(key)
-        return count is not None and int(count) >= settings.login_max_attempts
+        return count is not None and int(count) >= (limit or settings.login_max_attempts)
     except Exception:  # Redis indisponible : on ne bloque pas la connexion
         return False
 
@@ -52,6 +58,7 @@ def _login_failed(db: Session, key: str, username: str, ip: str, action: str = "
                   status_code: int = status.HTTP_401_UNAUTHORIZED,
                   detail: str = "Identifiant ou mot de passe incorrect.") -> HTTPException:
     _register_failure(key)
+    _register_failure(_ip_key(ip))
     audit(db, username[:64], action, details={"ip": ip})
     db.commit()
     return HTTPException(status_code=status_code, detail=detail)
@@ -106,7 +113,7 @@ def auth_config():
 def login(payload: LoginRequest, request: Request, db: Session = Depends(get_db)):
     ip = client_ip(request)
     key = _fail_key(payload.username, ip)
-    if _is_locked(key):
+    if _is_locked(key) or _is_locked(_ip_key(ip), settings.login_max_attempts_per_ip):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Trop de tentatives. Réessayez dans {settings.login_lock_minutes} minutes.",

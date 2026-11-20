@@ -19,8 +19,7 @@ export default function Login() {
   }, [])
 
   if (user) {
-    const from = (location.state as { from?: string } | null)?.from ?? '/'
-    return <Navigate to={from} replace />
+    return <Navigate to={safeRedirect((location.state as { from?: unknown } | null)?.from)} replace />
   }
 
   async function submit(e: FormEvent) {
@@ -64,4 +63,9 @@ export default function Login() {
       </div>
     </div>
   )
+}
+
+/** Retour après connexion : uniquement un chemin interne (« /… »), jamais « //hôte » ni « /\\hôte ». */
+export function safeRedirect(from: unknown): string {
+  return typeof from === 'string' && /^\/(?![\/\\])/.test(from) && !/[\u0000-\u001f]/.test(from) ? from : '/'
 }

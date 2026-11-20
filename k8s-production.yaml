@@ -149,7 +149,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: postgres
-          image: postgres:15.10-alpine
+          image: postgres:15.20-alpine
           ports: [{containerPort: 5432, name: postgres}]
           envFrom: [{configMapRef: {name: noc-config}}]
           env:
@@ -213,7 +213,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: influxdb
-          image: influxdb:2.7.11-alpine
+          image: influxdb:2.7.12-alpine
           ports: [{containerPort: 8086, name: http}]
           envFrom: [{configMapRef: {name: noc-config}}]
           env:

@@ -211,12 +211,46 @@ Le retour arrière ne concerne que l'application. Les migrations de la v3 étant
 **Contenu de chaque sauvegarde**, dans `/var/backups/noc/<date>/` (dossier en 700) :
 - `postgres.dump` (`pg_dump`, format personnalisé) ;
 - `influxdb/` (`influx backup`) ;
-- `etc-noc.tar.gz` (configuration) ;
-- `secrets.tar.gz`.
+- `etc-noc.tar.gz.gpg` (configuration, dont `secrets.env` et la clé TLS) ;
+- `secrets.tar.gz.gpg` (secrets Podman, dont `SECRET_KEY`).
 
-> ⚠ `secrets.tar.gz` contient `SECRET_KEY`. Sans elle, les mots de passe des équipements restaurés sont illisibles. Copiez les sauvegardes vers un stockage protégé.
+> ⚠ `SECRET_KEY` déchiffre les mots de passe de tous les équipements supervisés. Les fichiers marqués `.gpg` sont chiffrés pour une clé dont la **partie privée n'est jamais sur le serveur** : une copie volée des sauvegardes ne donne aucun identifiant. Sans clé configurée, ces deux fichiers sont écrits en clair (sans `.gpg`) et chaque sauvegarde l'indique par un avertissement.
+
+**Mettre en place le chiffrement (une fois).** Sur un poste de l'équipe sécurité, pas sur le serveur :
+
+```bash
+gpg --quick-gen-key "NOC INFRA sauvegardes" rsa4096 encr never
+```
+
+```bash
+gpg --armor --export "NOC INFRA sauvegardes" > backup-public.asc
+```
+
+Conservez la clé privée hors du serveur, avec une copie de secours (coffre, séquestre) : **sans elle, les secrets sauvegardés sont irrécupérables.** Copiez ensuite seulement la clé publique sur le serveur :
+
+```bash
+sudo install -m 644 backup-public.asc /etc/noc/backup-public.asc
+```
+
+Les sauvegardes suivantes sont chiffrées. Pour le vérifier immédiatement :
+
+```bash
+sudo /opt/noc/deploy/rhel/backup.sh
+```
 
 **Restaurer** (même serveur ou serveur neuf) :
+
+0. **Déchiffrer** `secrets.tar.gz.gpg` et `etc-noc.tar.gz.gpg` sur le poste qui détient la clé privée (nécessaire seulement pour un serveur neuf ou pour récupérer la configuration) :
+
+   ```bash
+   gpg -o secrets.tar.gz -d secrets.tar.gz.gpg
+   ```
+
+   ```bash
+   gpg -o etc-noc.tar.gz -d etc-noc.tar.gz.gpg
+   ```
+
+   Sur le même serveur, la restauration des bases (étapes 2 à 6) n'en a pas besoin : les secrets sont toujours dans Podman.
 
 1. **Sur un serveur neuf uniquement : recréer les secrets avant `install.sh`.** Pour chaque fichier extrait de `secrets.tar.gz` :
 

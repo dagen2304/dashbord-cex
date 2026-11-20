@@ -3,13 +3,13 @@
 # de PyPI, et échoue immédiatement si un wheel venait à manquer.
 
 # ── Étape 1 : dépendances Python ──
-FROM python:3.12-slim-bookworm AS build
+FROM python:3.12.16-slim-trixie AS build
 ARG PIP_INDEX_URL=https://pypi.org/simple
 COPY requirements.txt .
 RUN pip install --no-cache-dir --only-binary=:all: --prefix=/install -r requirements.txt
 
 # ── Étape 2 : image d'exécution ──
-FROM python:3.12-slim-bookworm
+FROM python:3.12.16-slim-trixie
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN addgroup --system --gid 1001 appgroup \
     && adduser --system --uid 1001 --ingroup appgroup --no-create-home appuser

@@ -25,6 +25,19 @@ def test_wrong_password_is_rejected_then_locked(client):
     assert res.status_code == 429
 
 
+def test_password_spraying_from_one_ip_is_blocked(client):
+    """Quelques essais sur beaucoup de comptes depuis une même adresse : bloqué après 20 échecs."""
+    headers = {"X-Real-IP": "10.9.9.9"}
+    for i in range(20):  # 2 essais sur 10 comptes : aucun compte n'atteint son propre seuil
+        res = client.post("/api/auth/login", json={"username": f"compte{i // 2}", "password": "Ete2026!"}, headers=headers)
+        assert res.status_code == 401
+    res = client.post("/api/auth/login", json={"username": "admin", "password": ADMIN[1]}, headers=headers)
+    assert res.status_code == 429  # même le bon mot de passe, depuis cette adresse
+    # Une autre adresse n'est pas affectée.
+    ok = client.post("/api/auth/login", json={"username": "admin", "password": ADMIN[1]}, headers={"X-Real-IP": "10.9.9.10"})
+    assert ok.status_code == 200
+
+
 def test_unknown_user_gets_same_error(client):
     res = client.post("/api/auth/login", json={"username": "ghost", "password": "x"})
     assert res.status_code == 401

@@ -129,7 +129,7 @@ Les variables à renseigner sont dans `.env.example`.
 | **Sécurité des pods** | aucune contrainte, conteneurs en root | namespace en Pod Security Standards **« restricted »** (appliqué) ; tous les conteneurs **non-root**, sans élévation de privilèges, sans capacités, seccomp `RuntimeDefault`, **racine en lecture seule** (`emptyDir` pour `/tmp`), jeton de compte de service non monté |
 | **Réseau** | tout ouvert | `NetworkPolicy` **« tout interdit par défaut »**, puis flux minimaux : Ingress → interface et API ; API et workers → bases ; workers → équipements (ports 443, 8088, 3009, 1556, 22) et SMTP ; API → AD (636/389) ; DNS. Les bases n'acceptent que leurs clients et ne sortent nulle part |
 | **Secrets** | `envFrom` : **chaque pod recevait tous les secrets**, Redis compris | `secretKeyRef` : chaque conteneur ne reçoit que ses clés (PostgreSQL : son mot de passe ; InfluxDB : les siens ; Redis et l'interface : aucun) |
-| **Images** | `:latest`, `imagePullPolicy: Always`, tags flottants | versions figées (`postgres:15.10-alpine`, `influxdb:2.7.11-alpine`, `redis:7.4.1-alpine`, application `3.0.0`, à remplacer par la version publiée, idéalement par son digest) |
+| **Images** | `:latest`, `imagePullPolicy: Always`, tags flottants | versions figées (`postgres:15.20-alpine`, `influxdb:2.7.12-alpine`, `redis:7.4.12-alpine`, application `3.0.0`, à remplacer par la version publiée, idéalement par son digest) |
 | **Bases** | `Deployment` | PostgreSQL et InfluxDB en **`StatefulSet`**, qui **réutilisent les PVC existants** : aucune migration de données |
 | **Redis** | volume persistant | cache et broker uniquement : `emptyDir`, persistance désactivée, `maxmemory` |
 | **Santé** | aucune sonde | sondes de démarrage, de disponibilité et de vivacité (`/health`, `/ready`, `pg_isready`, `redis-cli ping`, `celery inspect ping`) ; requêtes et limites CPU/mémoire partout |
@@ -204,6 +204,22 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Inventaire | Ajout, modification, archivage et détection (administrateur). Dernière erreur de collecte. Mot de passe jamais réaffiché. |
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
+
+### Audit de sécurité du 20/11/2026 — corrections P0 et P1
+
+Analyse : pip-audit, npm audit, Trivy (images), Bandit, gitleaks (historique), revue manuelle. Rapport détaillé remis à part (confidentiel).
+
+| Version | Correction |
+|---|---|
+| 3.2.2 | Interface sur **Nginx 1.31.7** (1.27 plus maintenue, failles HTTP/2 de 2026). |
+| 3.2.2 | **Redis 7.4.12** (CVE-2025-49844 « RediShell » et suivantes) **avec mot de passe** : fichier `requirepass` monté depuis un podman secret, jamais dans la ligne de commande ; `update.sh` crée les secrets et redémarre les bases modifiées. |
+| 3.3.0 | **PostgreSQL 15.20**, **InfluxDB 2.7.12**, backend sur **Python 3.12.16 / Debian 13 (trixie)** : vulnérabilités élevées ou critiques des images divisées par 2 à 4 ; aucune dans les paquets Python. |
+| 3.3.0 | **React Router 7.18.6**, Vite 5.4.21, PostCSS 8.5.33 : plus aucune vulnérabilité dans les dépendances livrées (`npm audit --omit=dev`). Retour après connexion limité aux chemins internes. |
+| 3.3.0 | **Pulvérisation de mots de passe** : 20 échecs par adresse IP, tous comptes confondus, bloquent l'adresse 15 min (en plus des 5 échecs par compte) ; Nginx limite `/api/auth/login` à 10 essais/min par adresse. |
+| 3.3.0 | **Jetons masqués dans les journaux** : l'URL du WebSocket (`?token=…`) était journalisée en clair par Uvicorn (trouvé pendant les vérifications de cet audit). |
+| 3.3.0 | **Sauvegardes chiffrées** (GPG, clé privée hors du serveur) : `secrets.tar.gz.gpg`, `etc-noc.tar.gz.gpg`. |
+
+Restent à la charge de l'exploitation : correctifs RHEL, certificat de l'AC interne, mise à niveau de vROps 8.10.2 ; et le lot P2 (filtrage de la sortie réseau des conteneurs, analyse Trivy hebdomadaire, sessions plus courtes, envoi des journaux au SIEM, images figées par empreinte, test d'intrusion).
 
 ### Vérifications effectuées
 

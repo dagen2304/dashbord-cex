@@ -12,6 +12,7 @@ from sqlalchemy import text
 from app.api.endpoints.ws import start_redis_listener, stop_redis_listener
 from app.api.router import api_router
 from app.core.config import settings
+from app.core import log_redaction
 from app.core.database import Base, engine
 from app.core.migrations import run_migrations
 from app.core.redis_client import r_client
@@ -21,6 +22,7 @@ from app.core.security import bootstrap_admin
 from app.models import application, inventory, user  # noqa: F401
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+log_redaction.install()  # jetons masqués dans tous les journaux (URL du WebSocket)
 logger = logging.getLogger(__name__)
 
 
@@ -51,7 +53,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="NOC INFRA Central API",
     description="Supervision vCenter et baies de stockage / sauvegarde.",
-    version="3.0.0",
+    version="3.3.0",
     lifespan=lifespan,
 )
 

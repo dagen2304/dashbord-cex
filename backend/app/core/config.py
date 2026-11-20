@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     collector_timeout_s: int = 120  # durée max d'une collecte d'un équipement
     login_max_attempts: int = 5
     login_lock_minutes: int = 15
+    login_max_attempts_per_ip: int = 20  # échecs par adresse IP, tous comptes confondus, sur la même fenêtre
 
     @field_validator("secret_key")
     @classmethod

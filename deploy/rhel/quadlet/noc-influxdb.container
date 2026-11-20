@@ -3,7 +3,7 @@ Description=NOC INFRA — InfluxDB (séries temporelles)
 
 [Container]
 ContainerName=noc-influxdb
-Image=docker.io/library/influxdb:2.7.11-alpine
+Image=docker.io/library/influxdb:2.7.12-alpine
 Network=noc.network
 Volume=noc-influxdb.volume:/var/lib/influxdb2
 EnvironmentFile=/etc/noc/noc.env

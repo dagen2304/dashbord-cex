@@ -44,7 +44,7 @@ x-backend-deps: &backend-deps
 
 services:
   db:
-    image: postgres:15-alpine
+    image: postgres:15.20-alpine
     container_name: noc_postgres
     restart: always
     environment:
@@ -62,7 +62,7 @@ services:
       start_period: 10s
 
   influxdb:
-    image: influxdb:2.7-alpine
+    image: influxdb:2.7.12-alpine
     container_name: noc_influxdb
     restart: always
     environment:
