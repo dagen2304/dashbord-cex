@@ -4,7 +4,7 @@
 
 x-backend-env: &backend-env
   DATABASE_URL: ${DATABASE_URL:?DATABASE_URL est requis dans .env}
-  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  REDIS_URL: redis://:${REDIS_PASSWORD:?REDIS_PASSWORD est requis dans .env}@redis:6379/0
   INFLUXDB_URL: ${INFLUXDB_URL:-http://influxdb:8086}
   INFLUXDB_TOKEN: ${INFLUXDB_TOKEN:?INFLUXDB_TOKEN est requis dans .env}
   INFLUXDB_ORG: ${INFLUXDB_ORG:-noc_org}
@@ -84,10 +84,19 @@ services:
       start_period: 15s
 
   redis:
-    image: redis:7-alpine
+    image: redis:7.4.12-alpine
     container_name: noc_redis
     restart: always
-    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+    command:
+      - sh
+      - -c
+      - |
+        exec redis-server - --save "" --appendonly no --maxmemory 256mb --maxmemory-policy volatile-lru <<EOF
+        requirepass $$REDIS_PASSWORD
+        EOF
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD est requis dans .env}
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
     networks: [noc_network]
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]

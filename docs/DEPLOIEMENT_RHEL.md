@@ -8,7 +8,7 @@ Première mise en production sur **un serveur RHEL unique**, en attendant que le
 |---|---|
 | Moteur | **Podman** (fourni et supporté par Red Hat) avec **Quadlet** : chaque conteneur est un service `systemd` (`systemctl`, `journalctl`), démarré automatiquement au boot |
 | Installation | **hors ligne possible** : les images sont construites sur un poste qui a accès à Internet, puis transférées dans un paquet `.tar.gz` |
-| Sécurité | conteneurs **non-root**, racine en lecture seule, sans capacités, `no-new-privileges`, SELinux actif ; secrets dans `podman secret`, jamais dans un fichier lisible |
+| Sécurité | conteneurs **non-root**, racine en lecture seule, sans capacités, `no-new-privileges`, SELinux actif ; secrets dans `podman secret`, jamais dans un fichier lisible ; Redis protégé par mot de passe (depuis 3.2.2) |
 | Accès | **HTTPS** sur le port 443 du serveur ; le port 80 redirige vers HTTPS |
 | Exploitation | sauvegarde quotidienne, mise à jour avec retour arrière automatique, testeur de flux réseau |
 
@@ -186,13 +186,15 @@ Pour chaque flux, le résultat indique la résolution DNS, l'ouverture TCP et, s
 Construisez le nouveau paquet (étape 2), transférez-le, puis :
 
 ```bash
-tar xzf noc-dashboard-3.0.1-rhel.tar.gz && sudo ./noc-dashboard-3.0.1/deploy/rhel/update.sh
+tar xzf noc-dashboard-<version>-rhel.tar.gz && sudo ./noc-dashboard-<version>/deploy/rhel/update.sh
 ```
 
 `update.sh` effectue, dans l'ordre :
 1. une **sauvegarde** ;
 2. le chargement des nouvelles images (l'actuelle devient `previous`) ;
-3. le redémarrage de l'application. Les bases ne sont pas arrêtées.
+3. la création des secrets nouvellement requis (ex. mot de passe Redis en 3.2.2) ;
+4. le redémarrage, une à une, des **bases dont l'image ou la configuration change** (correctifs de sécurité de PostgreSQL, InfluxDB ou Redis), chacune devant redevenir saine ; les données sont conservées ;
+5. le redémarrage de l'application.
 
 Si l'API ou l'interface ne redevient pas saine, le script **revient automatiquement** à la version précédente.
 
@@ -202,7 +204,7 @@ Si l'API ou l'interface ne redevient pas saine, le script **revient automatiquem
 sudo /opt/noc/deploy/rhel/rollback.sh
 ```
 
-Le retour arrière ne concerne que l'application. Les migrations de la v3 étant additives, la version précédente lit la base sans difficulté.
+Le retour arrière ne concerne que l'application. Les migrations de la v3 étant additives, la version précédente lit la base sans difficulté. Les bases restent dans leur nouvelle version (correctifs mineurs, compatibles), et le mot de passe Redis est aussi transmis à une version antérieure à 3.2.2 (le secret `noc_redis_url` est prioritaire sur `REDIS_URL`).
 
 ### Sauvegarde et restauration
 

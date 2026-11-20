@@ -94,6 +94,8 @@ ensure_secret noc_influxdb_password "$(random_secret 32)"
 ensure_secret noc_influxdb_token "$(random_secret 48)"
 ensure_secret noc_secret_key "$(random_secret 48)"
 ensure_secret noc_jwt_secret "$(random_secret 48)"
+REDIS_NEW_SECRET=false
+if ensure_redis_secrets; then REDIS_NEW_SECRET=true; fi
 if ! secret_exists noc_admin_initial_password; then
     admin_pass="Noc-$(random_secret 16)-$(random_secret 4)!"
     ensure_secret noc_admin_initial_password "$admin_pass"
@@ -134,6 +136,8 @@ fi
 # ── 8. Démarrage dans l'ordre ─────────────────────────────────────────────────
 info "Démarrage des bases…"
 systemctl start noc-postgres noc-influxdb noc-redis
+# Nouveau mot de passe Redis sur une installation existante : Redis doit le relire.
+if $REDIS_NEW_SECRET; then systemctl restart noc-redis; fi
 for c in noc-postgres noc-influxdb noc-redis; do wait_healthy "$c" 240 || die "$c ne démarre pas : journalctl -u $c"; done
 info "Démarrage de l'application…"
 systemctl restart noc-backend

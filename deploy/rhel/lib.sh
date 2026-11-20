@@ -75,3 +75,26 @@ on_error() {
     exit "$code"
 }
 enable_error_trap() { set -E; trap on_error ERR; }
+
+# Mot de passe Redis (depuis 3.2.2). Trois secrets dérivés d'une même valeur :
+#   noc_redis_conf     « requirepass … » monté dans le conteneur Redis ;
+#   noc_redis_password pour redis-cli (contrôle de santé) ;
+#   noc_redis_url      URL complète pour l'API, la collecte et le planificateur.
+# Redis ne contient qu'un cache et des files de tâches : si l'un des trois manque,
+# les trois sont régénérés (Redis doit alors être redémarré, ce que font install/update).
+ensure_redis_secrets() {
+    local s pw
+    if secret_exists noc_redis_conf && secret_exists noc_redis_password && secret_exists noc_redis_url; then
+        info "Secrets Redis déjà présents (conservés)."
+        return 1
+    fi
+    for s in noc_redis_conf noc_redis_password noc_redis_url; do podman secret rm "$s" >/dev/null 2>&1 || true; done
+    pw=$(random_secret 40)
+    printf 'requirepass %s\n' "$pw" | podman secret create noc_redis_conf - >/dev/null
+    printf '%s' "$pw" | podman secret create noc_redis_password - >/dev/null
+    printf 'redis://:%s@noc-redis:6379/0' "$pw" | podman secret create noc_redis_url - >/dev/null
+    ok "Mot de passe Redis créé (secrets noc_redis_conf, noc_redis_password, noc_redis_url)."
+}
+
+# Empreinte d'une unité Quadlet installée (vide si absente) : sert à détecter un changement.
+unit_digest() { sha256sum "$NOC_QUADLET_DIR/$1" 2>/dev/null | cut -d' ' -f1; }

@@ -34,6 +34,8 @@ metadata:
 #     --from-literal=DATABASE_URL='postgresql://noc_admin:<POSTGRES_PASSWORD>@postgres:5432/noc_dashboard' \
 #     --from-literal=DOCKER_INFLUXDB_INIT_PASSWORD='...' \
 #     --from-literal=INFLUXDB_TOKEN='...' \
+#     --from-literal=REDIS_PASSWORD='<lettres et chiffres>' \
+#     --from-literal=REDIS_URL='redis://:<REDIS_PASSWORD>@redis:6379/0' \
 #     --from-literal=SECRET_KEY='...' \
 #     --from-literal=JWT_SECRET='<différent de SECRET_KEY>' \
 #     --from-literal=ADMIN_INITIAL_PASSWORD='<à vider après la 1re connexion>' \
@@ -63,7 +65,7 @@ data:
   POSTGRES_DB: noc_dashboard
   PGDATA: /var/lib/postgresql/data/pgdata
   # Redis / InfluxDB
-  REDIS_URL: redis://redis:6379/0
+  # REDIS_URL : dans le secret noc-secrets (contient le mot de passe).
   INFLUXDB_URL: http://influxdb:8086
   INFLUXDB_ORG: noc_org
   INFLUXDB_BUCKET: noc_metrics
@@ -274,8 +276,18 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: redis
-          image: redis:7.4.1-alpine
-          args: ["--save", "", "--appendonly", "no", "--maxmemory", "256mb", "--maxmemory-policy", "volatile-lru"]
+          image: redis:7.4.12-alpine
+          # Mot de passe lu sur l'entrée standard : absent de la ligne de commande du processus.
+          command:
+            - sh
+            - -c
+            - |
+              exec redis-server - --save "" --appendonly no --maxmemory 256mb --maxmemory-policy volatile-lru <<EOF
+              requirepass $REDIS_PASSWORD
+              EOF
+          env:
+            - {name: REDIS_PASSWORD, valueFrom: {secretKeyRef: {name: noc-secrets, key: REDIS_PASSWORD}}}
+            - {name: REDISCLI_AUTH, valueFrom: {secretKeyRef: {name: noc-secrets, key: REDIS_PASSWORD}}}
           ports: [{containerPort: 6379, name: redis}]
           securityContext:
             allowPrivilegeEscalation: false
@@ -339,6 +351,7 @@ spec:
           envFrom: [{configMapRef: {name: noc-config}}]
           env:
             - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: REDIS_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: REDIS_URL}}}
             - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
             - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
             - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}
@@ -407,6 +420,7 @@ spec:
           envFrom: [{configMapRef: {name: noc-config}}]
           env:
             - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: REDIS_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: REDIS_URL}}}
             - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
             - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
             - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}
@@ -460,6 +474,7 @@ spec:
           envFrom: [{configMapRef: {name: noc-config}}]
           env:
             - {name: DATABASE_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: DATABASE_URL}}}
+            - {name: REDIS_URL, valueFrom: {secretKeyRef: {name: noc-secrets, key: REDIS_URL}}}
             - {name: INFLUXDB_TOKEN, valueFrom: {secretKeyRef: {name: noc-secrets, key: INFLUXDB_TOKEN}}}
             - {name: SECRET_KEY, valueFrom: {secretKeyRef: {name: noc-secrets, key: SECRET_KEY}}}
             - {name: JWT_SECRET, valueFrom: {secretKeyRef: {name: noc-secrets, key: JWT_SECRET}}}

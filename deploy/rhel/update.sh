@@ -7,7 +7,7 @@
 #
 # 1. sauvegarde complète (bases + configuration + secrets) ;
 # 2. chargement des nouvelles images, l'actuelle devient « previous » ;
-# 3. redémarrage de l'application (les bases ne sont pas arrêtées) ;
+# 3. redémarrage des bases dont l'image ou la configuration change, puis de l'application ;
 # 4. si l'API ou l'interface ne redeviennent pas saines : retour automatique à « previous ».
 # Les migrations de schéma de la v3 sont additives : l'ancienne version reste compatible.
 # ==============================================================================
@@ -36,11 +36,32 @@ for img in "${NOC_IMAGES[@]}"; do
     podman tag "localhost/$img:$NEW" "localhost/$img:current"
 done
 
-info "3/4 Mise à jour des unités et des outils…"
+info "3/4 Mise à jour des unités, des secrets et des outils…"
+BASES=(noc-postgres noc-influxdb noc-redis)
+declare -A before
+for b in "${BASES[@]}"; do before[$b]=$(unit_digest "$b.container"); done
+redis_secrets_new=false
+if ensure_redis_secrets; then redis_secrets_new=true; fi
+# REDIS_URL sans mot de passe des versions < 3.2.2 : remplacé par le secret noc_redis_url.
+if grep -q '^REDIS_URL=' "$NOC_ETC/noc.env"; then
+    sed -i 's|^REDIS_URL=|# Remplacé par le secret noc_redis_url (3.2.2) : REDIS_URL=|' "$NOC_ETC/noc.env"
+    info "REDIS_URL retiré de $NOC_ETC/noc.env (mot de passe désormais fourni par un secret)."
+fi
 install -m 644 "$KIT"/deploy/rhel/quadlet/* "$NOC_QUADLET_DIR"/
 install -m 644 "$KIT/deploy/rhel/config/nginx-tls.conf" "$NOC_ETC/nginx-tls.conf"
 rm -rf /opt/noc/deploy && cp -r "$KIT/deploy" /opt/noc/deploy && cp "$KIT/VERSION" /opt/noc/VERSION
 systemctl daemon-reload
+
+# Bases dont l'image ou la configuration a changé (correctif de sécurité, mot de passe Redis) :
+# redémarrées une à une, chacune doit redevenir saine avant de continuer. Leurs données sont
+# conservées (volumes) et une sauvegarde vient d'être prise.
+for b in "${BASES[@]}"; do
+    if [[ $(unit_digest "$b.container") != "${before[$b]}" ]] || { [[ $b == noc-redis ]] && $redis_secrets_new; }; then
+        info "Redémarrage de $b (nouvelle image ou configuration)…"
+        systemctl restart "$b"
+        wait_healthy "$b" 240 || die "$b ne redevient pas sain : journalctl -u $b -n 100 (sauvegarde : $NOC_BACKUP_DIR)"
+    fi
+done
 
 info "4/4 Redémarrage de l'application…"
 systemctl restart noc-backend

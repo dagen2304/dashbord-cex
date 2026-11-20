@@ -25,7 +25,7 @@ ENGINE=${ENGINE:-$(command -v podman >/dev/null && echo podman || echo docker)}
 THIRD_PARTY=(
     docker.io/library/postgres:15.10-alpine
     docker.io/library/influxdb:2.7.11-alpine
-    docker.io/library/redis:7.4.1-alpine
+    docker.io/library/redis:7.4.12-alpine
 )
 OUT="$ROOT/dist"
 STAGE=$(mktemp -d)
