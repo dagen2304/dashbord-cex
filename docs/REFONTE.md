@@ -205,6 +205,12 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### Scality RING : HTTP 400 et valeurs inventées (3.3.5)
+
+- **HTTP 400** « The browser (or proxy) sent a request that this server could not understand » : les GET partaient avec `Content-Type: application/json` sans corps ; l'API Supervisor (Flask / Eve) tentait de décoder ce corps vide. L'en-tête n'est plus envoyé.
+- **Valeurs inventées supprimées** : `iops_s3` était fixé à 0 et `active_nodes` copiait le nombre total de nœuds. Ils ne sont plus remontés ; la carte affiche capacité utilisée (%, To) et nombre de nœuds.
+- État du ring autre que `OK` signalé par une alerte ; capacité absente laissée vide et signalée.
+
 ### Performance Dorado et Unity : jamais 0 par défaut (3.3.4)
 
 - **Principe** : une mesure de performance indisponible reste **vide** (« — » à l'écran) et la cause est signalée par une alerte INFO « Non collecté, laissé vide : … ». Elle n'est plus remplacée par 0, qui se confondait avec une baie à l'arrêt.

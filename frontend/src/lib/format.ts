@@ -119,7 +119,7 @@ export function metricValue(field: string, value: number | string | null | undef
 export function keyMetrics(category: string, type: string): string[] {
   if (type === 'NETBACKUP') return ['backup_success_rate', 'jobs_failed', 'jobs_active']
   if (type === 'DATADOMAIN') return ['capacity_usage_pct', 'dedup_ratio', 'active_streams']
-  if (type === 'SCALITY') return ['capacity_usage_pct', 'iops_s3', 'active_nodes']
+  if (type === 'SCALITY') return ['capacity_usage_pct', 'capacity_used_tb', 'total_nodes']
   if (type === 'VROPS') return ['alerts_critical', 'capacity_time_remaining_days', 'vms_oversized']
   if (type === 'VERITAS_ACCESS') return ['capacity_usage_pct', 'nfs_shares_active', 'cifs_shares_active']
   if (category === 'VIRTUALIZATION') return ['cpu_usage_pct', 'ram_usage_pct', 'datastores_usage_pct']
