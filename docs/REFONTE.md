@@ -208,7 +208,7 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 ### NetBackup : connexion et valeurs inventées (3.3.6)
 
 - **Adresse** : NetBackup n'accepte que les noms présents dans son certificat web ; appelé par son IP, il répond HTTP 400, errorCode 8963. Déclarer le serveur primaire **par son nom** dans l'inventaire.
-- **Compte** : Active Directory `DOMAINE\utilisateur` (domainType `NT`) ; compte local du serveur primaire `utilisateur` (domainType `unixpwd`, au lieu de `UNIXPWD`).
+- **Compte** : local du serveur primaire `utilisateur` (domainType `unixpwd`, au lieu de `UNIXPWD`) ; Active Directory sur serveur primaire Windows `DOMAINE\utilisateur` (`NT`) ; AD déclaré comme domaine LDAP dans NetBackup (serveur primaire Linux, NetBackup Appliance) `ldap:domaine\utilisateur` (3.3.7) ; préfixes `nt:`, `vx:`, `unixpwd:` acceptés.
 - **Jeton** envoyé tel quel dans `Authorization` (NetBackup n'utilise pas `Bearer`) : sans cela, toutes les requêtes suivant la connexion auraient été refusées.
 - **Erreurs lisibles** : le message de NetBackup (`errorMessage`, `errorCode`) est affiché ; HTTP 401 suspend la collecte (identifiants refusés).
 - **Aucune valeur inventée** : sans job terminé sur 24 h, le taux de réussite est inconnu (et non 100 %) ; succès partiel (code 1) compté comme réussi ; media servers illisibles laissés vides et signalés. Jobs lus par pages de 100.
