@@ -36,6 +36,42 @@ class DoradoCollector(BaseCollector):
         "throughput":    "21",
     }
 
+    # HEALTHSTATUS / RUNNINGSTATUS d'un pool (API OceanStor / Dorado).
+    _POOL_HEALTH = {"1": "NORMAL", "2": "FAULT", "5": "DEGRADED"}
+    _POOL_RUNNING = {"27": "ONLINE", "28": "OFFLINE", "53": "INITIALIZING", "106": "DEGRADED"}
+
+    @classmethod
+    def _pool_row(cls, pool: Dict[str, Any]) -> Dict[str, Any]:
+        """Un pool de stockage ; un champ absent de la réponse reste absent (aucune valeur inventée)."""
+        def tb(key):
+            try:
+                return round(int(pool[key]) * 512 / 1024 ** 4, 2) if pool.get(key) not in (None, "") else None
+            except (TypeError, ValueError):
+                return None
+        row: Dict[str, Any] = {"name": pool.get("NAME") or f"Pool {pool.get('ID', '?')}"}
+        if pool.get("ID") is not None:
+            row["id"] = str(pool["ID"])
+        total, used, free, subscribed = (tb("USERTOTALCAPACITY"), tb("USERCONSUMEDCAPACITY"),
+                                         tb("USERFREECAPACITY"), tb("SUBSCRIBEDCAPACITY"))
+        if total:
+            row["capacity_tb"] = total
+            if used is not None:
+                row["used_tb"] = used
+                row["usage_pct"] = round(used / total * 100, 1)
+            row["free_tb"] = free if free is not None else (round(total - used, 2) if used is not None else None)
+            if subscribed is not None:
+                row["subscribed_tb"] = subscribed
+                row["subscription_pct"] = round(subscribed / total * 100, 1)
+        try:
+            row["alarm_threshold_pct"] = float(pool["USERCONSUMEDCAPACITYTHRESHOLD"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        if str(pool.get("HEALTHSTATUS")) in cls._POOL_HEALTH:
+            row["health"] = cls._POOL_HEALTH[str(pool["HEALTHSTATUS"])]
+        if str(pool.get("RUNNINGSTATUS")) in cls._POOL_RUNNING:
+            row["running"] = cls._POOL_RUNNING[str(pool["RUNNINGSTATUS"])]
+        return {k: v for k, v in row.items() if v is not None}
+
     def collect(self) -> Dict[str, Any]:
         logger.info(f"[Dorado] Démarrage collecte pour '{self.device_name}' ({self.config.get('host')})")
         return self._collect_real()
@@ -112,10 +148,13 @@ class DoradoCollector(BaseCollector):
 
             total_capacity_bytes = 0
             used_capacity_bytes = 0
+            storage_pools = []
             for pool in pools:
                 # OceanStor retourne les capacités en secteurs de 512 octets
                 total_capacity_bytes += int(pool.get("USERTOTALCAPACITY", 0)) * 512
                 used_capacity_bytes += int(pool.get("USERCONSUMEDCAPACITY", 0)) * 512
+                storage_pools.append(self._pool_row(pool))
+            storage_pools.sort(key=lambda p: p.get("usage_pct", -1), reverse=True)
 
             total_tb = round(total_capacity_bytes / (1024 ** 4), 2)
             used_tb = round(used_capacity_bytes / (1024 ** 4), 2)
@@ -175,16 +214,30 @@ class DoradoCollector(BaseCollector):
             except Exception as alarm_err:
                 logger.warning(f"[Dorado] Alarmes indisponibles: {alarm_err}")
 
-            if usage_pct > 80 and status == "HEALTHY":
-                status = "WARNING"
-                alerts.append({
-                    "severity": "WARNING",
-                    "message": f"Pools Dorado à {usage_pct}% de capacité ({used_tb} / {total_tb} TB)",
-                    "component": "StoragePool"
-                })
+            # Alerte PAR POOL : un pool presque plein ne doit pas être masqué par la moyenne
+            # de la baie (ex. un pool à 95 % et un autre à 30 % donnent 60 % au total).
+            for sp in storage_pools:
+                threshold = sp.get("alarm_threshold_pct") or 80.0
+                if sp.get("usage_pct") is not None and sp["usage_pct"] >= threshold:
+                    critical = sp["usage_pct"] >= max(90.0, threshold)
+                    alerts.append({
+                        "severity": "CRITICAL" if critical else "WARNING",
+                        "message": f"Pool {sp['name']} à {sp['usage_pct']:g} % ({sp['used_tb']:g} / {sp['capacity_tb']:g} To, seuil {threshold:g} %)",
+                        "component": "StoragePool",
+                    })
+                    if critical:
+                        status = "CRITICAL"
+                    elif status == "HEALTHY":
+                        status = "WARNING"
+                if sp.get("health") in ("FAULT", "DEGRADED"):
+                    alerts.append({"severity": "CRITICAL" if sp["health"] == "FAULT" else "WARNING",
+                                   "message": f"Pool {sp['name']} : état {'défaillant' if sp['health'] == 'FAULT' else 'dégradé'}",
+                                   "component": "StoragePool"})
+                    status = "CRITICAL" if sp["health"] == "FAULT" else ("WARNING" if status == "HEALTHY" else status)
 
             payload["status"] = status
             payload["alerts"] = alerts
+            payload["storage_pools"] = storage_pools
             payload["metrics"] = {
                 "iops": iops,
                 "latency_ms": latency_ms,

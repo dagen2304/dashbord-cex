@@ -173,7 +173,27 @@ def _storage_payload(dtype: str, t: float, days: float) -> Dict[str, Any]:
         status = "CRITICAL"
         alerts.append({"severity": "CRITICAL", "component": "Storage Pool",
                        "message": f"Pool à {m['capacity_usage_pct']} % — saturation imminente"})
-    return {"device_type": category, "status": status, "metrics": m, "alerts": alerts}
+    payload = {"device_type": category, "status": status, "metrics": m, "alerts": alerts}
+    if dtype == "HUAWEI_DORADO":
+        # Trois pools dont la somme correspond au total de la baie (300 To).
+        pools = []
+        for name, cap, share, sub, health in (("StoragePool_SAN_PROD", 160.0, 0.62, 131.0, "NORMAL"),
+                                              ("StoragePool_SAN_PRA", 100.0, 0.30, 96.0, "NORMAL"),
+                                              ("StoragePool_NAS", 40.0, 0.08, 72.0, "DEGRADED")):
+            pu = round(min(m["capacity_used_tb"] * share, cap), 2)
+            pools.append({"name": name, "capacity_tb": cap, "used_tb": pu, "free_tb": round(cap - pu, 2),
+                          "usage_pct": round(pu / cap * 100, 1), "subscribed_tb": round(cap * sub / 100, 2),
+                          "subscription_pct": sub, "alarm_threshold_pct": 80.0, "health": health, "running": "ONLINE"})
+        pools.sort(key=lambda p: p["usage_pct"], reverse=True)
+        payload["storage_pools"] = pools
+        for p in pools:
+            if p["usage_pct"] >= 80:
+                alerts.append({"severity": "WARNING", "component": "StoragePool",
+                               "message": f"Pool {p['name']} à {p['usage_pct']:g} % ({p['used_tb']:g} / {p['capacity_tb']:g} To, seuil 80 %)"})
+                payload["status"] = "WARNING" if payload["status"] == "HEALTHY" else payload["status"]
+        alerts.append({"severity": "WARNING", "component": "StoragePool", "message": "Pool StoragePool_NAS : état dégradé"})
+        payload["status"] = "WARNING" if payload["status"] == "HEALTHY" else payload["status"]
+    return payload
 
 
 def _vrops_payload(t: float, days: float) -> Dict[str, Any]:

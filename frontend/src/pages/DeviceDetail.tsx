@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { AlertTriangle, ArrowLeft, Clock, OctagonAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { CATEGORY_LABEL, METRIC_META, TYPE_LABEL, dateTime, isDemoHost, fmt, keyMetrics, metricLabel, metricValue, relativeTime } from '@/lib/format'
-import type { DeviceState, SeriesPoint } from '@/lib/types'
+import type { DeviceState, SeriesPoint, StoragePool } from '@/lib/types'
 import { TimeSeriesChart } from '@/components/charts'
 import { Card, DemoBadge, EmptyState, ErrorState, FilterField, PageHeader, Segmented, Select, Spinner, StatusBadge, UsageBar } from '@/components/ui'
 
@@ -127,6 +127,47 @@ export default function DeviceDetail() {
         </Card>
       ) : null}
 
+      {d.storage_pools?.length ? (
+        <Card className="mb-4" title={`Pools de stockage (${d.storage_pools.length})`} bodyClassName="p-0">
+          <div className="max-h-[420px] overflow-auto">
+            <table className="table-base">
+              <thead><tr>
+                <th>Pool</th><th>État</th><th className="text-right">Capacité</th><th className="text-right">Utilisé</th>
+                <th className="text-right">Libre</th><th className="w-56">Utilisation</th><th className="text-right">Souscription</th>
+              </tr></thead>
+              <tbody>
+                {d.storage_pools.map((p) => (
+                  <tr key={p.id ?? p.name}>
+                    <td className="font-mono text-2xs">{p.name}</td>
+                    <td><PoolState pool={p} /></td>
+                    <td className="num text-right">{fmt(p.capacity_tb, 2, 'To')}</td>
+                    <td className="num text-right">{fmt(p.used_tb, 2, 'To')}</td>
+                    <td className="num text-right">{fmt(p.free_tb, 2, 'To')}</td>
+                    <td>
+                      <UsageBar value={p.usage_pct} />
+                      {p.alarm_threshold_pct !== undefined ? <p className="text-2xs text-muted">seuil d’alarme de la baie : {fmt(p.alarm_threshold_pct, 0, '%')}</p> : null}
+                    </td>
+                    <td className="num text-right">
+                      {p.subscription_pct !== undefined ? (
+                        <span className={p.subscription_pct > 100 ? 'inline-flex items-center gap-1 font-medium text-warn' : undefined}
+                          title={p.subscription_pct > 100 ? 'Surallocation : plus d’espace promis aux LUN que la capacité du pool' : undefined}>
+                          {p.subscription_pct > 100 ? <AlertTriangle className="size-3.5" aria-label="Surallocation" /> : null}
+                          {fmt(p.subscription_pct, 0, '%')}
+                        </span>
+                      ) : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="border-t border-border px-4 py-2 text-2xs text-muted">
+            Souscription : capacité promise aux LUN rapportée à la capacité du pool (au-delà de 100 %, surallocation).
+            L’historique et la date de saturation de chaque pool sont dans <Link to="/capacity" className="text-accent hover:underline">Capacité</Link>.
+          </p>
+        </Card>
+      ) : null}
+
       {d.hosts_metrics?.length ? (
         <Card className="mb-4" title={`Hôtes ESXi (${d.hosts_metrics.length})`} bodyClassName="p-0">
           <div className="max-h-[420px] overflow-auto">
@@ -172,4 +213,13 @@ export default function DeviceDetail() {
       ) : null}
     </>
   )
+}
+
+/** État d'un pool : santé et fonctionnement, icône + libellé. */
+function PoolState({ pool }: { pool: StoragePool }) {
+  if (pool.health === 'FAULT' || pool.running === 'OFFLINE') return <StatusBadge status="CRITICAL" label={pool.health === 'FAULT' ? 'Défaillant' : 'Hors ligne'} />
+  if (pool.health === 'DEGRADED' || pool.running === 'DEGRADED') return <StatusBadge status="WARNING" label="Dégradé" />
+  if (pool.running === 'INITIALIZING') return <StatusBadge status="UNSYNCED" label="Initialisation" />
+  if (pool.health === 'NORMAL') return <StatusBadge status="HEALTHY" label="Normal" />
+  return <span className="text-muted">—</span>
 }

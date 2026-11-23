@@ -239,6 +239,8 @@ def _store_capacity_history(device_id: str, payload: Dict[str, Any]) -> None:
         add("Capacité globale", "TB", m.get("capacity_total_tb"), m.get("capacity_used_tb"))
         if m.get("subscription_pct") is not None:
             add("Souscription", "%", 100, m.get("subscription_pct"))
+        for pool in payload.get("storage_pools") or []:
+            add(f"Pool {pool['name']}", "TB", pool.get("capacity_tb"), pool.get("used_tb"))
     if not entries:
         return
     try:

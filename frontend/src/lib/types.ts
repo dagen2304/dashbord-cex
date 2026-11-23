@@ -41,6 +41,8 @@ export interface DeviceState {
   sparkline?: { field: string; points: SeriesPoint[] }
   hosts_metrics?: Array<{ host_name: string; cluster: string; status: string; cpu_usage_pct: number; ram_usage_pct: number }>
   datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number; read_latency_ms?: number; write_latency_ms?: number }>
+  /** Pools de stockage d'une baie (Huawei Dorado) ; champ absent = non fourni par la baie. */
+  storage_pools?: StoragePool[]
   /** vRealize Operations : champ absent = valeur non fournie par vROps. */
   clusters_metrics?: VropsCluster[]
   vrops_hosts?: VropsHost[]
@@ -52,6 +54,20 @@ export interface DeviceState {
   health_summary?: Record<string, Record<HealthColor, number>>
   vrops_missing_keys?: string[]
   vrops_diagnostics?: string[]
+}
+
+export interface StoragePool {
+  name: string
+  id?: string
+  capacity_tb?: number
+  used_tb?: number
+  free_tb?: number
+  usage_pct?: number
+  subscribed_tb?: number
+  subscription_pct?: number
+  alarm_threshold_pct?: number
+  health?: 'NORMAL' | 'FAULT' | 'DEGRADED'
+  running?: 'ONLINE' | 'OFFLINE' | 'INITIALIZING' | 'DEGRADED'
 }
 
 /** Couleur de santé vROps (badge Health). */

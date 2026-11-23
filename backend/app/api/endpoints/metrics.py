@@ -36,7 +36,8 @@ SPARKLINE_FIELD_BY_TYPE = {"NETBACKUP": "backup_success_rate", "VERITAS_ACCESS":
 # Détails volumineux exclus de la vue d'ensemble (disponibles via /devices/{id}).
 _HEAVY_KEYS = ("vms_metrics", "vms_fs_metrics", "hosts_metrics", "datastores_metrics",
                "clusters_metrics", "vrops_datastores", "rightsizing", "vrops_hosts", "vm_contention",
-               "snapshots", "vrops_alerts", "health_summary", "vrops_missing_keys", "vrops_diagnostics")
+               "snapshots", "vrops_alerts", "health_summary", "vrops_missing_keys", "vrops_diagnostics",
+               "storage_pools")
 
 
 def _parse_ts(value: Optional[str]) -> Optional[datetime]:

@@ -205,6 +205,12 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### Pools de stockage Huawei Dorado (3.3.2)
+
+- **Détail par pool** sur la fiche de la baie : état (santé, fonctionnement), capacité, utilisé, libre, utilisation avec le seuil d'alarme configuré sur la baie, souscription (surallocation signalée au-delà de 100 %). Champs lus dans `storagepool` (`USERTOTALCAPACITY`, `USERCONSUMEDCAPACITY`, `USERFREECAPACITY`, `SUBSCRIBEDCAPACITY`, `USERCONSUMEDCAPACITYTHRESHOLD`, `HEALTHSTATUS`, `RUNNINGSTATUS`) ; un champ absent reste vide.
+- **Alertes par pool** à la place de l'alerte sur le total de la baie : un pool presque plein n'est plus masqué par la moyenne (95 % + 30 % = 60 % au total). Seuil : celui de la baie, 80 % à défaut ; critique à 90 %. Pool défaillant ou dégradé signalé.
+- **Capacité** : chaque pool a son historique et sa date de saturation projetée (ressource « Pool <nom> »), un point par heure à partir de la mise à jour.
+
 ### Identifiants refusés : collecte suspendue (3.3.1)
 
 Un mot de passe refusé était retenté à chaque collecte (toutes les 60 s) : une baie Huawei Dorado annonçait « You can try for 4 times » avant verrouillage du compte.
