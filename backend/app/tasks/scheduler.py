@@ -19,13 +19,15 @@ from celery.exceptions import SoftTimeLimitExceeded
 from app.core.config import settings
 from app.core.database import SessionLocal
 from app.core.influx import get_influx
+from app.core.security import audit
 from app.core.redis_client import (
     HISTORY_GATE_KEY, LATEST_KEY, LOCK_KEY, NEXT_POLL_KEY, UPDATES_CHANNEL, r_client,
 )
 from app.core.smtp import send_latency_alert_email
 from app.demo import DEMO_SUFFIX
 from app.models.application import VM
-from app.models.inventory import InfrastructureDevice, LatencyAnomaly, MetricHistory, PasswordDecryptionError, ServiceDiscovery
+from app.models.inventory import AUTH_FAILED, InfrastructureDevice, LatencyAnomaly, MetricHistory, PasswordDecryptionError, ServiceDiscovery
+from app.services.base_collector import is_auth_error
 from app.services.collectors import COLLECTOR_REGISTRY, effective_interval
 from app.services.settings_service import get_polling_interval, get_setting
 from app.tasks.celery_app import celery_app
@@ -45,7 +47,8 @@ def dispatch_polling() -> int:
             .join(ServiceDiscovery, ServiceDiscovery.device_id == InfrastructureDevice.id)
             .filter(ServiceDiscovery.is_active.is_(True),
                     InfrastructureDevice.is_active.is_(True),
-                    InfrastructureDevice.is_archived.is_(False))
+                    InfrastructureDevice.is_archived.is_(False),
+                    InfrastructureDevice.last_sync_status.is_distinct_from(AUTH_FAILED))
             .all()
         ]
         demo_ids = {
@@ -86,7 +89,7 @@ def collect_device(device_id: str) -> None:
 def _collect(device_id: str) -> None:
     with SessionLocal() as db:
         device = db.get(InfrastructureDevice, device_id)
-        if not device or device.is_archived or not device.is_active:
+        if not device or device.is_archived or not device.is_active or device.last_sync_status == AUTH_FAILED:
             return
         collector_class = COLLECTOR_REGISTRY.get(device.device_type)
         if not collector_class:
@@ -114,6 +117,8 @@ def _collect(device_id: str) -> None:
     except Exception as exc:  # un collecteur ne doit jamais faire tomber le worker
         logger.exception("Collecte de %s en échec", name)
         payload = _error_payload(device_id, name, f"{type(exc).__name__}: {exc}")
+        if is_auth_error(exc):
+            payload["auth_failed"] = True
 
     payload["device_id"] = device_id
     payload["device_name"] = name
@@ -135,7 +140,16 @@ def _collect(device_id: str) -> None:
         device = db.get(InfrastructureDevice, device_id)
         if device:
             error = None if ok else "; ".join(a.get("message", "") for a in payload.get("alerts", []))[:500] or "Collecte en échec"
-            _set_sync(db, device, "ONLINE" if ok else "OFFLINE", error)
+            if not ok and payload.get("auth_failed"):
+                # Ne plus jamais réessayer automatiquement : chaque essai rapproche le compte
+                # de service de son verrouillage (sur l'équipement ou dans l'AD).
+                error = ("Identifiants refusés : collecte suspendue pour éviter le verrouillage du compte. "
+                         "Ressaisissez le mot de passe ou relancez la collecte dans l'inventaire. — " + error)[:500]
+                audit(db, "système", "device.auth_suspended", device.display_name, {"device_id": device_id})
+                _set_sync(db, device, AUTH_FAILED, error)
+                logger.warning("Collecte de %s suspendue : identifiants refusés.", name)
+            else:
+                _set_sync(db, device, "ONLINE" if ok else "OFFLINE", error)
 
     r_client.publish(UPDATES_CHANNEL, json.dumps({
         "type": "DEVICE_UPDATED", "device_id": device_id, "status": payload.get("status"),

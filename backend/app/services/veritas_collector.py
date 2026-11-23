@@ -140,6 +140,7 @@ class VeritasCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[VeritasAccess] ✗ Connexion SSH échouée pour {host}:{port}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion SSH Veritas Access {host}:{port} échouée — {type(e).__name__}: {e}",

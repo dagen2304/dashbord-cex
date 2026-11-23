@@ -34,7 +34,7 @@ function DeviceCard({ d }: { d: DeviceState }) {
           </h3>
           <p className="truncate text-2xs text-muted">{TYPE_LABEL[d.device_type] ?? d.device_type} · <span className="font-mono">{d.hostname_ip}</span></p>
         </div>
-        <StatusBadge status={d.status} />
+        <StatusBadge status={d.last_sync_status === 'AUTH_FAILED' ? 'AUTH_FAILED' : d.status} />
       </div>
 
       {d.status === 'NO_DATA' || Object.keys(d.metrics).length === 0 ? (

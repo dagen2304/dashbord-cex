@@ -193,6 +193,7 @@ class NetBackupCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[NetBackup] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion REST NetBackup {host}:{port} échouée — {type(e).__name__}: {e}",

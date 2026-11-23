@@ -14,6 +14,10 @@ fernet_key = base64.urlsafe_b64encode(sha256(settings.secret_key.encode()).diges
 cipher_suite = Fernet(fernet_key)
 
 
+# last_sync_status d'un équipement dont la collecte est suspendue après un refus d'identifiants.
+AUTH_FAILED = "AUTH_FAILED"
+
+
 class PasswordDecryptionError(Exception):
     """Le mot de passe stocké ne peut pas être déchiffré avec la SECRET_KEY actuelle."""
 

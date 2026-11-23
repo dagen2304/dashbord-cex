@@ -164,6 +164,7 @@ class PowerStoreCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[PowerStore] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion REST Dell PowerStore {host}:{port} échouée — {type(e).__name__}: {e}",

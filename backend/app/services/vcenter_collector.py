@@ -413,6 +413,7 @@ class VCenterCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[vCenter] ✗ Connexion échouée vers {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Impossible de se connecter au vCenter {host}:{port} — {type(e).__name__}: {e}",

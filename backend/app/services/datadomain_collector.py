@@ -3,7 +3,7 @@ import base64
 import requests
 from typing import Dict, Any
 
-from app.services.base_collector import BaseCollector
+from app.services.base_collector import BaseCollector, CredentialsRejected
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,10 @@ class DataDomainCollector(BaseCollector):
                         json={"auth_info": {"username": user, "password": password}},
                         timeout=60
                     )
+                    # Identifiants refusés : on s'arrête là. Essayer les autres versions de l'API
+                    # ferait 3 échecs par collecte et verrouillerait le compte 3 fois plus vite.
+                    if r.status_code in (401, 403):
+                        raise CredentialsRejected(f"Identifiants refusés par Data Domain (HTTP {r.status_code})")
                     if r.status_code in [200, 201]:
                         token = r.headers.get("X-DD-AUTH-TOKEN")
                         if not token:
@@ -71,6 +75,8 @@ class DataDomainCollector(BaseCollector):
                             session.headers["X-DD-AUTH-TOKEN"] = token
                             base = current_base
                             break
+                except CredentialsRejected:
+                    raise
                 except Exception as e:
                     logger.debug(f"[DataDomain] Login version {ver} failed: {e}")
                     continue
@@ -176,6 +182,7 @@ class DataDomainCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[DataDomain] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion REST DataDomain {host}:{port} échouée — {type(e).__name__}: {e}",

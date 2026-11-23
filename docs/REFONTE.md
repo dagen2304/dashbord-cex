@@ -205,6 +205,16 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### Identifiants refusés : collecte suspendue (3.3.1)
+
+Un mot de passe refusé était retenté à chaque collecte (toutes les 60 s) : une baie Huawei Dorado annonçait « You can try for 4 times » avant verrouillage du compte.
+
+- **Un seul essai** : dès qu'un équipement refuse les identifiants (HTTP 401, `InvalidLogin` vCenter, refus SSH, code d'erreur Dorado, refus vROps…), la collecte passe à l'état **« Identifiants refusés »** et **n'est plus retentée**, ni par le répartiteur ni par une tâche déjà en file. Un évènement `device.auth_suspended` est ajouté au journal d'audit.
+- **Reprise** : en ressaisissant le mot de passe (ou en changeant le compte, l'adresse, le port) dans l'inventaire ; ou par « Relancer la collecte » (un seul essai), après correction sur l'équipement. Désactiver puis réactiver l'équipement ne suffit pas.
+- Les erreurs réseau, TLS ou d'équipement ne déclenchent pas la suspension : elles sont retentées normalement.
+- **Huawei Dorado** : comptes LDAP / AD de la baie acceptés (`LDAP\utilisateur` → `scope` 1) ; le refus, renvoyé avec un HTTP 200, est lu dans `error.code`.
+- **Dell DataDomain** : arrêt au premier refus. Le collecteur essayait les versions v1.0, v2.0 et v3.0 de l'API, soit 3 échecs par collecte.
+
 ### Audit de sécurité du 20/11/2026 — corrections P0 et P1
 
 Analyse : pip-audit, npm audit, Trivy (images), Bandit, gitleaks (historique), revue manuelle. Rapport détaillé remis à part (confidentiel).

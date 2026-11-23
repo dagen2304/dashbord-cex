@@ -57,7 +57,7 @@ export default function DeviceDetail() {
               Collecté {relativeTime(d.collected_at)}{d.stale && d.collected_at ? ' (périmé)' : ''}
             </span>
             {isDemoHost(d.hostname_ip) ? <DemoBadge /> : null}
-            <StatusBadge status={d.status} />
+            <StatusBadge status={d.last_sync_status === 'AUTH_FAILED' ? 'AUTH_FAILED' : d.status} />
           </div>
         }
       />

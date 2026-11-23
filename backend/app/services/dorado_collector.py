@@ -1,9 +1,10 @@
 import logging
+import re
 import requests
 import json
 from typing import Dict, Any, Optional
 
-from app.services.base_collector import BaseCollector
+from app.services.base_collector import BaseCollector, CredentialsRejected
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,13 @@ class DoradoCollector(BaseCollector):
             except:
                 extra_params = {}
         auth_scope = int(extra_params.get("scope", 0))
+        # Compte LDAP / AD de la baie : saisir « LDAP\utilisateur » dans l'inventaire (scope 1).
+        if "\\" in user:
+            prefix, name = user.split("\\", 1)
+            if prefix.strip().upper() == "LDAP":
+                user, auth_scope = name, 1
+            elif prefix.strip().upper() in ("LOCAL", ""):
+                user, auth_scope = name, 0
 
         try:
             # ── 1. Authentification ───────────────────────────────────────
@@ -73,6 +81,15 @@ class DoradoCollector(BaseCollector):
                 timeout=self._TIMEOUT,
             )
             auth_resp.raise_for_status()
+            # La baie répond HTTP 200 même si le mot de passe est faux : l'échec est dans error.code.
+            auth_error = (auth_resp.json() or {}).get("error") or {}
+            if auth_error.get("code") not in (None, 0, "0"):
+                detail = auth_error.get("description") or "refus de connexion"
+                if re.search(r"password|user ?name|locked|lock|authenticat|scope", detail, re.I):
+                    raise CredentialsRejected(
+                        f"Identifiants refusés par la baie (code {auth_error.get('code')}) : {detail} "
+                        f"[compte {'LDAP' if auth_scope == 1 else 'local'}]")
+                raise ValueError(f"Connexion refusée par la baie (code {auth_error.get('code')}) : {detail}")
             auth_data = auth_resp.json().get("data", {})
             ibase_token = auth_data.get("iBaseToken")
             device_id = auth_data.get("deviceid")
@@ -188,6 +205,7 @@ class DoradoCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[Dorado] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion REST Huawei Dorado {host}:{port} échouée — {type(e).__name__}: {e}",

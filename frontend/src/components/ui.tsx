@@ -4,7 +4,7 @@ import {
 } from 'react'
 import clsx from 'clsx'
 import {
-  AlertTriangle, CheckCircle2, CircleDashed, Clock, Loader2, OctagonAlert, PowerOff, X,
+  AlertTriangle, CheckCircle2, CircleDashed, Clock, KeyRound, Loader2, OctagonAlert, PowerOff, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 
@@ -149,6 +149,7 @@ const STATUS: Record<string, { label: string; tone: Tone; icon: LucideIcon }> = 
   OFFLINE: { label: 'Injoignable', tone: 'crit', icon: PowerOff },
   NO_DATA: { label: 'Sans données', tone: 'nodata', icon: CircleDashed },
   UNSYNCED: { label: 'En attente', tone: 'nodata', icon: Clock },
+  AUTH_FAILED: { label: 'Identifiants refusés', tone: 'crit', icon: KeyRound },
   ARCHIVED: { label: 'Archivé', tone: 'nodata', icon: CircleDashed },
   NO_DATA_VM: { label: 'Sans données', tone: 'nodata', icon: CircleDashed },
 }

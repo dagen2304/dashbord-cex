@@ -127,6 +127,7 @@ class VRopsCollector(BaseCollector):
             return payload
         except Exception as exc:
             logger.error("[vROps] ✗ Erreur de collecte pour %s : %s", host, exc)
+            self.mark_failure(payload, exc)
             payload.update(status="OFFLINE", metrics={}, alerts=[{
                 "severity": "CRITICAL",
                 "message": f"Suite API vROps {host}:{port} inaccessible — {type(exc).__name__}: {exc}",

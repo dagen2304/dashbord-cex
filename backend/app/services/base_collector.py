@@ -5,6 +5,26 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
+class CredentialsRejected(PermissionError):
+    """L'équipement a refusé les identifiants (mauvais mot de passe, compte verrouillé…)."""
+
+
+def is_auth_error(exc: BaseException) -> bool:
+    """Vrai si l'échec vient des identifiants, et non du réseau, du TLS ou de l'équipement.
+
+    Un tel échec ne doit PAS être retenté : chaque nouvel essai rapproche le compte de
+    service de son verrouillage (sur l'équipement, ou dans l'Active Directory)."""
+    if isinstance(exc, PermissionError):
+        return True
+    response = getattr(exc, "response", None)
+    if response is not None and getattr(response, "status_code", None) == 401:
+        return True
+    name = type(exc).__name__
+    # pyVmomi : vim.fault.InvalidLogin ; paramiko : AuthenticationException, BadAuthenticationType…
+    return name in {"InvalidLogin", "AuthenticationException", "BadAuthenticationType",
+                    "PasswordRequiredException", "NotAuthenticated"}
+
 class BaseCollector(ABC):
     """
     Interface commune pour tous les collecteurs d'équipements de la plateforme.
@@ -36,6 +56,12 @@ class BaseCollector(ABC):
         """Session HTTPS appliquant la politique TLS de l'équipement (verify / pin / insecure)."""
         from app.services.tls import http_session
         return http_session(self.tls_policy, self.device_name)
+
+    @staticmethod
+    def mark_failure(payload: Dict[str, Any], exc: BaseException) -> None:
+        """À appeler dans le bloc d'échec final : signale au planificateur un refus d'identifiants."""
+        if is_auth_error(exc):
+            payload["auth_failed"] = True
 
     def get_base_payload(self, status: str = "HEALTHY") -> Dict[str, Any]:
         """

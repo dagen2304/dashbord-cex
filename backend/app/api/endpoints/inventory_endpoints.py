@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.redis_client import NEXT_POLL_KEY, r_client
 from app.core.security import audit, require_admin
-from app.models.inventory import InfrastructureDevice, ServiceDiscovery, SystemSetting
+from app.models.inventory import AUTH_FAILED, InfrastructureDevice, ServiceDiscovery, SystemSetting
 from app.models.user import User
 from app.schemas.inventory import (
     DeviceCreate, DeviceDiscoveryInput, DeviceDiscoveryResponse, DeviceResponse, DeviceUpdate,
@@ -262,6 +262,10 @@ def update_device(device_id: str, payload: DeviceUpdate, admin: User = Depends(r
         setattr(device, key, value)
     if password:
         device.set_password(password)
+    # Collecte suspendue après un refus d'identifiants : reprise seulement si ce qui sert
+    # à la connexion change (sinon le même essai échouerait et rapprocherait du verrouillage).
+    if device.last_sync_status == AUTH_FAILED and (password or {"username", "hostname_ip", "port", "device_type"} & changes.keys()):
+        device.last_sync_status, device.last_sync_error = "UNSYNCED", None
     _sync_discovery(db, device)
     audit(db, admin, "device.updated", device.display_name,
           {**{k: v for k, v in changes.items()}, **({"password": "changed"} if password else {})})
@@ -269,6 +273,24 @@ def update_device(device_id: str, payload: DeviceUpdate, admin: User = Depends(r
     db.refresh(device)
     if password or {"hostname_ip", "port", "username", "device_type", "is_active", "tls_mode", "tls_fingerprint"} & changes.keys():
         _poll_soon(device.id)
+    return device
+
+
+@router.post("/devices/{device_id}/resume", response_model=DeviceResponse)
+def resume_device_collection(device_id: str, admin: User = Depends(require_admin), db: Session = Depends(get_db)):
+    """Relance une collecte suspendue après un refus d'identifiants (ex. compte déverrouillé
+    ou mot de passe corrigé directement sur l'équipement). Une seule tentative est faite :
+    si elle échoue encore, la collecte est de nouveau suspendue."""
+    device = db.get(InfrastructureDevice, device_id)
+    if not device or device.is_archived:
+        raise HTTPException(status_code=404, detail="Équipement non trouvé.")
+    if device.last_sync_status != AUTH_FAILED:
+        raise HTTPException(status_code=409, detail="La collecte de cet équipement n'est pas suspendue.")
+    device.last_sync_status, device.last_sync_error = "UNSYNCED", None
+    audit(db, admin, "device.collection_resumed", device.display_name)
+    db.commit()
+    db.refresh(device)
+    _poll_soon(device.id)
     return device
 
 

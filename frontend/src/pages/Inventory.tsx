@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Archive, HardDrive, Lock, LockOpen, Pencil, Pin, Plus, Radar, ScanSearch, ShieldAlert } from 'lucide-react'
+import { Archive, HardDrive, Lock, LockOpen, Pencil, Pin, Plus, Radar, RotateCcw, ScanSearch, ShieldAlert } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useAuth } from '@/lib/auth'
 import { CATEGORY_LABEL, TYPE_LABEL, dateTime, isDemoHost, relativeTime } from '@/lib/format'
@@ -171,7 +171,9 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
         </fieldset>
         <Field label="Compte de service" htmlFor="d-user" hint={form.device_type === 'VROPS'
           ? 'Compte en lecture seule. Compte d’annuaire déclaré dans vROps : SOURCE\\utilisateur (SOURCE = nom de la source d’authentification dans vROps).'
-          : 'Utilisez un compte en lecture seule dédié à la supervision.'}>
+          : form.device_type === 'HUAWEI_DORADO'
+            ? 'Compte en lecture seule. Compte LDAP / AD de la baie : LDAP\\utilisateur ; compte local : utilisateur seul.'
+            : 'Utilisez un compte en lecture seule dédié à la supervision.'}>
           <Input id="d-user" autoComplete="off" value={form.username} onChange={(e) => set('username', e.target.value)} />
         </Field>
         <Field label="Mot de passe" htmlFor="d-pass" hint={device ? 'Laisser vide pour conserver le mot de passe actuel. Il n’est jamais réaffiché.' : 'Chiffré en base ; il n’est jamais réaffiché.'}>
@@ -212,6 +214,11 @@ export default function Inventory() {
   const insecureCount = (devices.data ?? []).filter((d) => !d.is_archived && d.tls_mode === 'insecure' && !isDemoHost(d.hostname_ip)).length
   const vendors = useQuery({ queryKey: ['vendors'], queryFn: () => api.get<Vendor[]>('/inventory/vendors'), staleTime: Infinity })
 
+  const [resuming, setResuming] = useState<Device | null>(null)
+  const resume = useMutation({
+    mutationFn: (id: string) => api.post(`/inventory/devices/${id}/resume`),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory'] }); qc.invalidateQueries({ queryKey: ['realtime'] }); setResuming(null) },
+  })
   const archive = useMutation({
     mutationFn: (id: string) => api.del(`/inventory/devices/${id}`),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ['inventory'] }); qc.invalidateQueries({ queryKey: ['realtime'] }); setArchiving(null) },
@@ -257,6 +264,11 @@ export default function Inventory() {
                     <td>
                       <StatusBadge status={d.is_archived ? 'ARCHIVED' : !d.is_active ? 'NO_DATA' : d.last_sync_status} label={!d.is_archived && !d.is_active ? 'Suspendue' : undefined} />
                       {d.last_sync_error && !d.is_archived ? <p className="mt-1 max-w-xs truncate text-2xs text-fg-2" title={d.last_sync_error}>{d.last_sync_error}</p> : null}
+                      {isAdmin && d.last_sync_status === 'AUTH_FAILED' && !d.is_archived ? (
+                        <button type="button" className="mt-1 text-2xs font-medium text-accent hover:underline" onClick={() => setResuming(d)}>
+                          Relancer la collecte
+                        </button>
+                      ) : null}
                     </td>
                     <td className="text-2xs text-muted" title={dateTime(d.last_sync_at)}>{relativeTime(d.last_sync_at)}</td>
                     {isAdmin ? (
@@ -278,6 +290,22 @@ export default function Inventory() {
       </Card>
 
       <DeviceForm device={editing} open={formOpen} onClose={() => setFormOpen(false)} vendors={vendors.data ?? []} />
+      <Modal open={Boolean(resuming)} onClose={() => setResuming(null)} title="Relancer la collecte ?"
+        footer={<>
+          <Button variant="ghost" onClick={() => setResuming(null)}>Annuler</Button>
+          <Button variant="primary" icon={RotateCcw} loading={resume.isPending} onClick={() => resuming && resume.mutate(resuming.id)}>Relancer</Button>
+        </>}>
+        <p className="text-sm text-fg-2">
+          {resuming?.display_name} a refusé les identifiants : la collecte est suspendue pour ne pas verrouiller le compte.
+        </p>
+        <p className="mt-2 text-sm text-fg-2">
+          Ne relancez qu’après avoir corrigé la cause <strong className="text-fg">sur l’équipement</strong> (compte déverrouillé, mot de passe réinitialisé).
+          Si le mot de passe a changé, modifiez plutôt l’équipement et saisissez le nouveau : la collecte reprend seule.
+          Un seul essai est fait ; s’il échoue, la collecte est de nouveau suspendue.
+        </p>
+        {resume.isError ? <InlineError message={(resume.error as Error).message} /> : null}
+      </Modal>
+
       <Modal open={Boolean(archiving)} onClose={() => setArchiving(null)} title="Archiver l’équipement ?"
         footer={<>
           <Button variant="ghost" onClick={() => setArchiving(null)}>Annuler</Button>

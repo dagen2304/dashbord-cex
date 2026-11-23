@@ -111,6 +111,7 @@ class ScalityCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[Scality] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion Scality RING {host}:{port} échouée — {type(e).__name__}: {e}",

@@ -189,6 +189,7 @@ class UnityCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[Unity] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion REST Dell Unity {host}:{port} échouée — {type(e).__name__}: {e}",
