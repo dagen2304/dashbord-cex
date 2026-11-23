@@ -205,6 +205,14 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### NetBackup : connexion et valeurs inventées (3.3.6)
+
+- **Adresse** : NetBackup n'accepte que les noms présents dans son certificat web ; appelé par son IP, il répond HTTP 400, errorCode 8963. Déclarer le serveur primaire **par son nom** dans l'inventaire.
+- **Compte** : Active Directory `DOMAINE\utilisateur` (domainType `NT`) ; compte local du serveur primaire `utilisateur` (domainType `unixpwd`, au lieu de `UNIXPWD`).
+- **Jeton** envoyé tel quel dans `Authorization` (NetBackup n'utilise pas `Bearer`) : sans cela, toutes les requêtes suivant la connexion auraient été refusées.
+- **Erreurs lisibles** : le message de NetBackup (`errorMessage`, `errorCode`) est affiché ; HTTP 401 suspend la collecte (identifiants refusés).
+- **Aucune valeur inventée** : sans job terminé sur 24 h, le taux de réussite est inconnu (et non 100 %) ; succès partiel (code 1) compté comme réussi ; media servers illisibles laissés vides et signalés. Jobs lus par pages de 100.
+
 ### Scality RING : HTTP 400 et valeurs inventées (3.3.5)
 
 - **HTTP 400** « The browser (or proxy) sent a request that this server could not understand » : les GET partaient avec `Content-Type: application/json` sans corps ; l'API Supervisor (Flask / Eve) tentait de décoder ce corps vide. L'en-tête n'est plus envoyé.

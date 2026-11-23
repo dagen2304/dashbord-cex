@@ -3,7 +3,7 @@ import requests
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any
 
-from app.services.base_collector import BaseCollector
+from app.services.base_collector import BaseCollector, CredentialsRejected
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +13,12 @@ class NetBackupCollector(BaseCollector):
     Collecteur de production pour Veritas NetBackup Master Server.
 
     API  : REST NetBackup API sur HTTPS port 1556
-    Auth : POST /netbackup/login → Bearer Token (API Key ou user/password)
+    Auth : POST /netbackup/login → jeton JWT, envoyé TEL QUEL dans « Authorization »
+           (NetBackup n'utilise pas le préfixe « Bearer »).
+           Compte Active Directory : saisir « DOMAINE\\utilisateur » (domainType NT) ;
+           compte local du serveur primaire : « utilisateur » (domainType unixpwd).
+    Adresse : le NOM du serveur tel qu'il figure dans son certificat web. Appelé par une
+           autre adresse (ex. son IP), NetBackup refuse la connexion (errorCode 8963).
 
     Métriques collectées :
         - Jobs actifs / total / échoués sur les dernières 24h
@@ -26,6 +31,15 @@ class NetBackupCollector(BaseCollector):
     _DEFAULT_PORT = 1556
     _TIMEOUT = 60
     _API_VERSION = "v4.0"
+
+    @staticmethod
+    def _nbu_error(resp) -> str:
+        """Message d'erreur de NetBackup ({errorCode, errorMessage}), sinon début du corps."""
+        try:
+            body = resp.json()
+            return f"{body.get('errorMessage') or body}" + (f" (code {body['errorCode']})" if body.get("errorCode") else "")
+        except ValueError:
+            return resp.text[:200] or f"HTTP {resp.status_code}"
 
     def collect(self) -> Dict[str, Any]:
         logger.info(f"[NetBackup] Démarrage collecte pour '{self.device_name}' ({self.config.get('host')})")
@@ -53,43 +67,50 @@ class NetBackupCollector(BaseCollector):
         try:
             # ── 1. Authentification ───────────────────────────────────────
             if api_key:
-                # Mode API Key (préféré pour les comptes de service)
-                session.headers.update({"Authorization": f"Bearer {api_key}"})
+                # Clé d'API NetBackup : envoyée telle quelle, sans « Bearer ».
+                session.headers.update({"Authorization": api_key})
                 logger.info(f"[NetBackup] Utilisation de l'API Key pour {host}:{port}")
             else:
-                # Mode Login/Password
-                logger.info(f"[NetBackup] Authentification user/password sur {base_url}/login")
+                if "\\" in user:   # compte Active Directory : DOMAINE\utilisateur
+                    domain_name, user_name = user.split("\\", 1)
+                    domain_type = "NT"
+                else:                # compte local du serveur primaire
+                    domain_name, user_name, domain_type = host, user, "unixpwd"
+                logger.info(f"[NetBackup] Authentification {domain_type} sur {base_url}/login")
                 login_resp = session.post(
                     f"{base_url}/login",
-                    json={
-                        "userName": user,
-                        "password": password,
-                        "domainType": "UNIXPWD",
-                        "domainName": host,
-                    },
+                    json={"userName": user_name, "password": password,
+                          "domainType": domain_type, "domainName": domain_name},
                     timeout=self._TIMEOUT,
                 )
-                login_resp.raise_for_status()
+                if login_resp.status_code == 401:
+                    raise CredentialsRejected(f"identifiants refusés par NetBackup ({self._nbu_error(login_resp)})")
+                if not login_resp.ok:
+                    raise ValueError(f"connexion refusée par NetBackup (HTTP {login_resp.status_code}) : {self._nbu_error(login_resp)}")
                 auth_token = login_resp.json().get("token")
                 if not auth_token:
-                    raise ValueError(f"Token absent dans la réponse login: {login_resp.text[:200]}")
-                session.headers.update({"Authorization": f"Bearer {auth_token}"})
+                    raise ValueError("réponse de connexion sans jeton")
+                session.headers.update({"Authorization": auth_token})
                 logger.info(f"[NetBackup] Authentifié avec succès")
 
             # ── 2. Jobs des dernières 24 heures ───────────────────────────
             now = datetime.now(timezone.utc)
             since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-            jobs_resp = session.get(
-                f"{base_url}/admin/jobs",
-                params={
-                    "filter": f"startTime ge '{since_24h}'",
-                    "page[limit]": 200,
-                },
-                timeout=self._TIMEOUT,
-            )
-            jobs_resp.raise_for_status()
-            jobs_data = jobs_resp.json().get("data", [])
+            # Pages de 100 (maximum de l'API) ; garde-fou à 50 pages.
+            jobs_data = []
+            for page in range(50):
+                jobs_resp = session.get(
+                    f"{base_url}/admin/jobs",
+                    params={"filter": f"startTime ge '{since_24h}'", "page[limit]": 100, "page[offset]": page * 100},
+                    timeout=self._TIMEOUT,
+                )
+                if not jobs_resp.ok:
+                    raise ValueError(f"lecture des jobs refusée (HTTP {jobs_resp.status_code}) : {self._nbu_error(jobs_resp)}")
+                batch = jobs_resp.json().get("data", [])
+                jobs_data.extend(batch)
+                if len(batch) < 100:
+                    break
 
             jobs_total = len(jobs_data)
             jobs_failed = 0
@@ -98,7 +119,7 @@ class NetBackupCollector(BaseCollector):
 
             for job in jobs_data:
                 attrs = job.get("attributes", {})
-                status_code = attrs.get("status", 0)
+                status_code = attrs.get("status")   # absent = inconnu, pas « succès »
                 state = attrs.get("state", "")
 
                 # États NetBackup : QUEUED, ACTIVE, DONE
@@ -106,28 +127,30 @@ class NetBackupCollector(BaseCollector):
                     jobs_active += 1
 
                 # Codes de status : 0=succès, >0=erreur
-                if state == "DONE" and status_code != 0:
+                if state == "DONE" and status_code not in (None, 0, 1):   # 1 = succès partiel
                     jobs_failed += 1
 
                 # Volume de données transféré
                 kb_written = attrs.get("kiloBytesWritten", 0) or 0
                 total_protected_bytes += kb_written * 1024
 
-            backup_success_rate = round(
-                ((jobs_total - jobs_failed) / jobs_total * 100), 2
-            ) if jobs_total > 0 else 100.0
+            finished = sum(1 for j in jobs_data if (j.get("attributes") or {}).get("state") == "DONE")
+            # Aucun job terminé sur 24 h : taux inconnu (et non 100 %).
+            backup_success_rate = round((finished - jobs_failed) / finished * 100, 2) if finished else None
 
             daily_protected_tb = round(total_protected_bytes / (1024 ** 4), 2)
 
             # ── 3. Media Servers ──────────────────────────────────────────
-            media_servers_total = 0
-            media_servers_online = 0
+            media_servers_total = media_servers_online = None   # inconnus tant que non lus
+            not_collected = []
             try:
                 ms_resp = session.get(
                     f"{base_url}/config/media-servers",
                     timeout=self._TIMEOUT,
                 )
-                if ms_resp.ok:
+                if not ms_resp.ok:
+                    not_collected.append(f"media servers (HTTP {ms_resp.status_code})")
+                else:
                     ms_data = ms_resp.json().get("data", [])
                     media_servers_total = len(ms_data)
                     media_servers_online = sum(
@@ -136,12 +159,13 @@ class NetBackupCollector(BaseCollector):
                     )
             except Exception as ms_err:
                 logger.warning(f"[NetBackup] Media servers indisponibles: {ms_err}")
+                not_collected.append(f"media servers ({type(ms_err).__name__})")
 
             # ── 4. Alertes et statut ──────────────────────────────────────
             alerts = []
             status = "HEALTHY"
 
-            if backup_success_rate < 95:
+            if backup_success_rate is not None and backup_success_rate < 95:
                 status = "CRITICAL" if backup_success_rate < 90 else "WARNING"
                 alerts.append({
                     "severity": "CRITICAL" if backup_success_rate < 90 else "WARNING",
@@ -149,7 +173,7 @@ class NetBackupCollector(BaseCollector):
                     "component": "Jobs"
                 })
 
-            if media_servers_total > 0 and media_servers_online < media_servers_total:
+            if media_servers_total and media_servers_online < media_servers_total:
                 status = "WARNING"
                 alerts.append({
                     "severity": "WARNING",
@@ -161,7 +185,7 @@ class NetBackupCollector(BaseCollector):
             failed_jobs = [
                 j for j in jobs_data
                 if j.get("attributes", {}).get("state") == "DONE"
-                and j.get("attributes", {}).get("status", 0) != 0
+                and j.get("attributes", {}).get("status") not in (None, 0, 1)
             ][:3]
 
             for fj in failed_jobs:
@@ -172,9 +196,12 @@ class NetBackupCollector(BaseCollector):
                     "component": "JobPolicy"
                 })
 
+            if not_collected:
+                alerts.append({"severity": "INFO", "component": "NetBackup-REST",
+                               "message": "Non collecté, laissé vide : " + " ; ".join(not_collected)})
             payload["status"] = status
             payload["alerts"] = alerts
-            payload["metrics"] = {
+            metrics = {
                 "backup_success_rate": backup_success_rate,
                 "jobs_total": jobs_total,
                 "jobs_failed": jobs_failed,
@@ -183,6 +210,7 @@ class NetBackupCollector(BaseCollector):
                 "media_servers_total": media_servers_total,
                 "media_servers_online": media_servers_online,
             }
+            payload["metrics"] = {k: v for k, v in metrics.items() if v is not None}
 
             logger.info(
                 f"[NetBackup] ✓ {jobs_total} jobs, {jobs_failed} échoués, "

@@ -171,6 +171,8 @@ function DeviceForm({ device, open, onClose, vendors }: { device: Device | null;
         </fieldset>
         <Field label="Compte de service" htmlFor="d-user" hint={form.device_type === 'VROPS'
           ? 'Compte en lecture seule. Compte d’annuaire déclaré dans vROps : SOURCE\\utilisateur (SOURCE = nom de la source d’authentification dans vROps).'
+          : form.device_type === 'NETBACKUP'
+            ? 'Compte AD : DOMAINE\\utilisateur ; compte local du serveur primaire : utilisateur seul. Adresse : le nom du serveur figurant dans son certificat (pas son IP).'
           : form.device_type === 'HUAWEI_DORADO'
             ? 'Compte en lecture seule. Compte LDAP / AD de la baie : LDAP\\utilisateur ; compte local : utilisateur seul.'
             : 'Utilisez un compte en lecture seule dédié à la supervision.'}>
