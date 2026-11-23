@@ -213,6 +213,12 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 - **Erreurs lisibles** : le message de NetBackup (`errorMessage`, `errorCode`) est affiché ; HTTP 401 suspend la collecte (identifiants refusés).
 - **Aucune valeur inventée** : sans job terminé sur 24 h, le taux de réussite est inconnu (et non 100 %) ; succès partiel (code 1) compté comme réussi ; media servers illisibles laissés vides et signalés. Jobs lus par pages de 100.
 
+### NetBackup : media servers (3.3.8)
+
+- **Tableau « Media servers »** sur la fiche du serveur primaire : nom, rôle (primaire / media server), état NetBackup (actif disque, bande, bande et disque, hors ligne), joignable, version NetBackup, système. Source : `GET /netbackup/config/media-servers` en **version 12.0** de l'API (celle de l'interface web NetBackup 10.x) ; en version 4.0, NetBackup 10.5 renvoie une liste vide. Repli automatique si le serveur ne connaît pas la version 12.0 (HTTP 406).
+- **Alerte** listant les media servers hors ligne par leur nom.
+- Les media servers ne s'ajoutent pas comme équipements : seul le primaire expose l'API REST (port 1556 d'un media server = PBX, sans HTTPS).
+
 ### Scality RING : HTTP 400 et valeurs inventées (3.3.5)
 
 - **HTTP 400** « The browser (or proxy) sent a request that this server could not understand » : les GET partaient avec `Content-Type: application/json` sans corps ; l'API Supervisor (Flask / Eve) tentait de décoder ce corps vide. L'en-tête n'est plus envoyé.

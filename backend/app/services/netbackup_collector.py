@@ -31,6 +31,45 @@ class NetBackupCollector(BaseCollector):
     _TIMEOUT = 60
     _API_VERSION = "v4.0"
 
+    MEDIA_STATUS = {
+        "ACTIVE_FOR_DISK": "Actif (disque)",
+        "ACTIVE_FOR_TAPE": "Actif (bande)",
+        "ACTIVE_FOR_TAPE_AND_DISK": "Actif (bande et disque)",
+        "ACTIVE": "Actif",
+        "OFFLINE": "Hors ligne",
+        "DEACTIVATED": "Désactivé",
+    }
+
+    def _media_servers(self, session, base_url: str):
+        """Media servers déclarés sur le primaire (GET /config/media-servers)."""
+        resp = None
+        for version in ("12.0", None):
+            headers = {"Accept": f"application/vnd.netbackup+json;version={version}"} if version else {}
+            resp = session.get(f"{base_url}/config/media-servers", headers=headers, timeout=self._TIMEOUT,
+                               params={"page[limit]": 100, "fieldset[mediaServer]": "minimal"})
+            if resp.status_code != 406:   # 406 : version d'API inconnue de ce serveur
+                break
+        if not resp.ok:
+            raise ValueError(f"HTTP {resp.status_code} : {self._nbu_error(resp)}")
+        rows = []
+        for item in resp.json().get("data", []):
+            a = item.get("attributes") or {}
+            code = (a.get("status") or {}).get("name") if isinstance(a.get("status"), dict) else a.get("status")
+            name = a.get("hostName") or item.get("id") or "?"
+            row = {
+                "name": name,
+                "role": "Primaire" if a.get("emmServerName") and a.get("emmServerName") == name else "Media server",
+                "status_code": code,
+                "status": self.MEDIA_STATUS.get(code, code),
+                "active": bool(code and code.startswith("ACTIVE")),
+                "reachable": a.get("isMachineUp"),
+                "nbu_version": a.get("nbuVersion"),
+                "os": " ".join(x for x in (a.get("osType"), a.get("osReleaseVersion")) if x) or None,
+            }
+            rows.append({k: v for k, v in row.items() if v is not None})
+        rows.sort(key=lambda r: (not r["active"], r.get("role") != "Primaire", r["name"]))
+        return rows
+
     DOMAIN_TYPES = {"unixpwd": "unixpwd", "nt": "NT", "ldap": "ldap", "vx": "vx"}
 
     @classmethod
@@ -159,26 +198,18 @@ class NetBackupCollector(BaseCollector):
 
             daily_protected_tb = round(total_protected_bytes / (1024 ** 4), 2)
 
-            # ── 3. Media Servers ──────────────────────────────────────────
-            media_servers_total = media_servers_online = None   # inconnus tant que non lus
+            # ── 3. Media servers ──────────────────────────────────────────
+            # Version 12.0 de l'API (celle de l'interface web NetBackup 10.x) : en 4.0, la liste
+            # revient vide. Repli sur la version de session si le serveur ne la connaît pas (406).
+            media_servers = None   # inconnus tant que non lus
             not_collected = []
             try:
-                ms_resp = session.get(
-                    f"{base_url}/config/media-servers",
-                    timeout=self._TIMEOUT,
-                )
-                if not ms_resp.ok:
-                    not_collected.append(f"media servers (HTTP {ms_resp.status_code})")
-                else:
-                    ms_data = ms_resp.json().get("data", [])
-                    media_servers_total = len(ms_data)
-                    media_servers_online = sum(
-                        1 for ms in ms_data
-                        if ms.get("attributes", {}).get("status", "INACTIVE") == "ACTIVE"
-                    )
+                media_servers = self._media_servers(session, base_url)
             except Exception as ms_err:
                 logger.warning(f"[NetBackup] Media servers indisponibles: {ms_err}")
-                not_collected.append(f"media servers ({type(ms_err).__name__})")
+                not_collected.append(f"media servers ({ms_err})")
+            media_servers_total = len(media_servers) if media_servers is not None else None
+            media_servers_online = (sum(1 for m in media_servers if m["active"]) if media_servers is not None else None)
 
             # ── 4. Alertes et statut ──────────────────────────────────────
             alerts = []
@@ -192,12 +223,13 @@ class NetBackupCollector(BaseCollector):
                     "component": "Jobs"
                 })
 
-            if media_servers_total and media_servers_online < media_servers_total:
-                status = "WARNING"
+            offline = [m["name"] for m in media_servers or [] if not m["active"]]
+            if offline:
+                status = "WARNING" if status == "HEALTHY" else status
                 alerts.append({
                     "severity": "WARNING",
-                    "message": f"Media Servers hors ligne : {media_servers_online}/{media_servers_total}",
-                    "component": "MediaServer"
+                    "message": f"Media servers hors ligne ({len(offline)}/{media_servers_total}) : {', '.join(offline)}",
+                    "component": "MediaServer",
                 })
 
             # Récupérer les jobs en FAILED les plus récents comme alertes
@@ -230,6 +262,8 @@ class NetBackupCollector(BaseCollector):
                 "media_servers_online": media_servers_online,
             }
             payload["metrics"] = {k: v for k, v in metrics.items() if v is not None}
+            if media_servers is not None:
+                payload["media_servers"] = media_servers
 
             logger.info(
                 f"[NetBackup] ✓ {jobs_total} jobs, {jobs_failed} échoués, "

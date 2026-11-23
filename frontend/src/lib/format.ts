@@ -104,6 +104,8 @@ export const METRIC_META: Record<string, { label: string; unit?: string; digits?
   reclaimable_vcpus: { label: 'vCPU récupérables', digits: 0 },
   reclaimable_memory_gb: { label: 'RAM récupérable', unit: 'Go', digits: 0 },
   snapshots_gb: { label: 'Snapshots', unit: 'Go', digits: 0 },
+  media_servers_online: { label: 'Media servers actifs', digits: 0 },
+  media_servers_total: { label: 'Media servers', digits: 0 },
 }
 
 export function metricLabel(field: string): string {

@@ -156,8 +156,16 @@ def _storage_payload(dtype: str, t: float, days: float) -> Dict[str, Any]:
         failed = round(60 + 15 * abs(w(180)))
         m = {"backup_success_rate": round(100 - failed / 1284 * 100, 1), "jobs_total": 1284, "jobs_failed": failed,
              "jobs_active": round(15 + 10 * abs(w(35))), "daily_protected_tb": 41.3}
-        return {"device_type": "backup", "status": "WARNING", "metrics": m,
-                "alerts": [{"severity": "WARNING", "message": f"{failed} jobs en échec sur les dernières 24 h", "component": "Jobs"}]}
+        media = [
+            {"name": "nbu-primary", "role": "Primaire", "status_code": "ACTIVE_FOR_DISK", "status": "Actif (disque)", "active": True, "reachable": True, "nbu_version": "10.5.0.1", "os": "Linux 8.10"},
+            {"name": "nbu-media01", "role": "Media server", "status_code": "ACTIVE_FOR_TAPE_AND_DISK", "status": "Actif (bande et disque)", "active": True, "reachable": True, "nbu_version": "10.5.0.1", "os": "Linux 8.10"},
+            {"name": "nbu-media02", "role": "Media server", "status_code": "ACTIVE_FOR_DISK", "status": "Actif (disque)", "active": True, "reachable": True, "nbu_version": "10.5.0.1", "os": "Linux 8.10"},
+            {"name": "nbu-legacy01", "role": "Media server", "status_code": "OFFLINE", "status": "Hors ligne", "active": False, "reachable": False, "nbu_version": "8.0", "os": "Linux"},
+        ]
+        m.update(media_servers_total=4, media_servers_online=3)
+        return {"device_type": "backup", "status": "WARNING", "metrics": m, "media_servers": media,
+                "alerts": [{"severity": "WARNING", "message": f"{failed} jobs en échec sur les dernières 24 h", "component": "Jobs"},
+                           {"severity": "WARNING", "message": "Media servers hors ligne (1/4) : nbu-legacy01", "component": "MediaServer"}]}
     elif dtype == "SCALITY":
         used = 236.4 + 0.25 * days
         m = {"iops_s3": round(2200 + 600 * w(50)), "active_nodes": 6, "total_nodes": 6,

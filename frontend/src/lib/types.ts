@@ -43,6 +43,8 @@ export interface DeviceState {
   datastores_metrics?: Array<{ datastore_name: string; capacity_tb: number; used_tb: number; usage_pct: number; latency_ms?: number; read_latency_ms?: number; write_latency_ms?: number }>
   /** Pools de stockage d'une baie (Huawei Dorado) ; champ absent = non fourni par la baie. */
   storage_pools?: StoragePool[]
+  /** Serveurs NetBackup déclarés sur le primaire (primaire compris). */
+  media_servers?: MediaServer[]
   /** vRealize Operations : champ absent = valeur non fournie par vROps. */
   clusters_metrics?: VropsCluster[]
   vrops_hosts?: VropsHost[]
@@ -54,6 +56,17 @@ export interface DeviceState {
   health_summary?: Record<string, Record<HealthColor, number>>
   vrops_missing_keys?: string[]
   vrops_diagnostics?: string[]
+}
+
+export interface MediaServer {
+  name: string
+  role?: 'Primaire' | 'Media server'
+  status_code?: string
+  status?: string
+  active: boolean
+  reachable?: boolean
+  nbu_version?: string
+  os?: string
 }
 
 export interface StoragePool {

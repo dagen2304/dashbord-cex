@@ -26,7 +26,7 @@ def test_ad_account_login_and_raw_token(monkeypatch):
     assert (m["jobs_total"], m["jobs_failed"], m["jobs_active"]) == (4, 1, 1)
     assert m["backup_success_rate"] == round(2 / 3 * 100, 2)     # sur les jobs terminés seulement
     assert "media_servers_total" not in m                         # illisible (404) : vide, pas 0
-    assert any(a["severity"] == "INFO" and "media servers (HTTP 404)" in a["message"] for a in payload["alerts"])
+    assert any(a["severity"] == "INFO" and "media servers (HTTP 404" in a["message"] for a in payload["alerts"])
 
 
 def test_local_account_uses_unixpwd(monkeypatch):
@@ -76,3 +76,72 @@ def test_account_formats():
     import pytest
     with pytest.raises(ValueError):
         parse("kerberos:X\\svc", "nbu")
+
+
+# ── Media servers (réponse réelle de NetBackup 10.5, cmmkp-nba-master01, abrégée) ──
+MEDIA_SERVERS = {"data": [
+    {"type": "mediaServer", "id": "cmmkp-nba-master01", "attributes": {
+        "hostName": "cmmkp-nba-master01", "isMachineUp": True, "machineType": 3,
+        "status": {"name": "ACTIVE_FOR_DISK"}, "emmServerName": "cmmkp-nba-master01",
+        "osType": "Linux", "osReleaseVersion": "8.10", "nbuVersion": "10.5.0.1"}},
+    {"type": "mediaServer", "id": "cmmkp-nba-media01", "attributes": {
+        "hostName": "cmmkp-nba-media01", "isMachineUp": True, "machineType": 1,
+        "status": {"name": "ACTIVE_FOR_TAPE_AND_DISK"}, "emmServerName": "cmmkp-nba-master01",
+        "osType": "Linux", "osReleaseVersion": "8.10", "nbuVersion": "10.5.0.1"}},
+    {"type": "mediaServer", "id": "netbk01", "attributes": {
+        "hostName": "netbk01", "isMachineUp": False, "machineType": 1, "status": {"name": "OFFLINE"},
+        "emmServerName": "cmmkp-nba-master01", "osType": "Linux", "nbuVersion": "8.0"}},
+    {"type": "mediaServer", "id": "netbk02", "attributes": {
+        "hostName": "netbk02", "isMachineUp": True, "machineType": 1, "status": {"name": "OFFLINE"},
+        "emmServerName": "cmmkp-nba-master01", "osType": "Linux", "nbuVersion": "8.0"}},
+]}
+
+
+class VersionedFake(Fake):
+    """La liste n'est renvoyée qu'en version 12.0 de l'API (en 4.0 : liste vide, comme constaté)."""
+
+    def send(self, request, **kw):
+        resp = super().send(request, **kw)
+        if request.path_url.startswith("/netbackup/config/media-servers"):
+            self.ms_accept = request.headers.get("Accept")
+            body = MEDIA_SERVERS if "version=12.0" in (self.ms_accept or "") else {"data": []}
+            import json as _json
+            resp.status_code, resp._content = 200, _json.dumps(body).encode()
+        return resp
+
+
+def test_media_servers_list(monkeypatch):
+    fake = VersionedFake({("POST", "/netbackup/login"): (201, {"token": "t"}),
+                          ("GET", "/netbackup/admin/jobs"): (200, {"data": []})})
+    payload = _run(NetBackupCollector("n", "NBU", _cfg(port=1556, username="ldap:ADCM\\svc")), fake, monkeypatch)
+    assert "version=12.0" in fake.ms_accept
+    ms = payload["media_servers"]
+    assert [m["name"] for m in ms] == ["cmmkp-nba-master01", "cmmkp-nba-media01", "netbk01", "netbk02"]
+    assert ms[0] == {"name": "cmmkp-nba-master01", "role": "Primaire", "status_code": "ACTIVE_FOR_DISK",
+                     "status": "Actif (disque)", "active": True, "reachable": True, "nbu_version": "10.5.0.1", "os": "Linux 8.10"}
+    assert ms[1]["status"] == "Actif (bande et disque)" and ms[1]["role"] == "Media server"
+    assert ms[3]["reachable"] is True and ms[3]["active"] is False   # joignable mais désactivé
+    m = payload["metrics"]
+    assert (m["media_servers_total"], m["media_servers_online"]) == (4, 2)
+    alert = next(a for a in payload["alerts"] if a["component"] == "MediaServer")
+    assert alert["message"] == "Media servers hors ligne (2/4) : netbk01, netbk02"
+    assert not any("media servers" in a["message"] for a in payload["alerts"] if a["severity"] == "INFO")
+
+
+def test_media_servers_fallback_when_version_unknown(monkeypatch):
+    calls = []
+
+    class Old(Fake):
+        def send(self, request, **kw):
+            resp = super().send(request, **kw)
+            if request.path_url.startswith("/netbackup/config/media-servers"):
+                calls.append(request.headers.get("Accept"))
+                import json as _json
+                ok = "12.0" not in request.headers.get("Accept", "")
+                resp.status_code = 200 if ok else 406
+                resp._content = _json.dumps(MEDIA_SERVERS if ok else {"errorMessage": "unsupported version"}).encode()
+            return resp
+    payload = _run(NetBackupCollector("n", "NBU", _cfg(port=1556, username="svc")),
+                   Old({("POST", "/netbackup/login"): (201, {"token": "t"}), ("GET", "/netbackup/admin/jobs"): (200, {"data": []})}),
+                   monkeypatch)
+    assert len(calls) == 2 and payload["metrics"]["media_servers_total"] == 4

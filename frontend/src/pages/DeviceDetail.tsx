@@ -127,6 +127,31 @@ export default function DeviceDetail() {
         </Card>
       ) : null}
 
+      {d.media_servers?.length ? (
+        <Card className="mb-4" title={`Media servers (${d.media_servers.length})`} bodyClassName="p-0">
+          <div className="max-h-[420px] overflow-auto">
+            <table className="table-base">
+              <thead><tr><th>Serveur</th><th>Rôle</th><th>État</th><th>Joignable</th><th>Version NetBackup</th><th>Système</th></tr></thead>
+              <tbody>
+                {d.media_servers.map((m) => (
+                  <tr key={m.name}>
+                    <td className="font-mono text-2xs">{m.name}</td>
+                    <td className="text-2xs">{m.role ?? '—'}</td>
+                    <td><StatusBadge status={m.active ? 'HEALTHY' : 'OFFLINE'} label={m.status ?? (m.active ? 'Actif' : 'Inactif')} /></td>
+                    <td className="text-2xs">{m.reachable === undefined ? '—' : m.reachable ? 'Oui' : <span className="font-medium text-crit">Non</span>}</td>
+                    <td className="num text-2xs">{m.nbu_version ?? '—'}</td>
+                    <td className="text-2xs">{m.os ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="border-t border-border px-4 py-2 text-2xs text-muted">
+            « Joignable » : la machine répond, même si NetBackup la considère comme hors ligne (serveur désactivé dans NetBackup).
+          </p>
+        </Card>
+      ) : null}
+
       {d.storage_pools?.length ? (
         <Card className="mb-4" title={`Pools de stockage (${d.storage_pools.length})`} bodyClassName="p-0">
           <div className="max-h-[420px] overflow-auto">
