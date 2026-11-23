@@ -1,73 +1,97 @@
+"""
+WebSocket temps réel : relaie aux navigateurs les notifications publiées par les workers
+sur le canal Redis `noc_updates`.
+
+Authentification : le navigateur ne peut pas envoyer d'en-tête Authorization sur un
+WebSocket, le jeton JWT est donc passé en paramètre `?token=`. Il est vérifié AVANT
+d'accepter la connexion.
+"""
 import asyncio
-import os
-import json
 import logging
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-import redis.asyncio as redis
+
+import redis.asyncio as aioredis
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
+from fastapi.concurrency import run_in_threadpool
+
+from app.core.config import settings
+from app.core.database import SessionLocal
+from app.core.redis_client import UPDATES_CHANNEL
+from app.core.security import user_from_token
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
-# Gestionnaire de connexions WebSocket
 class ConnectionManager:
-    def __init__(self):
-        self.active_connections: list[WebSocket] = []
+    def __init__(self) -> None:
+        self.active: set[WebSocket] = set()
 
-    async def connect(self, websocket: WebSocket):
-        await websocket.accept()
-        self.active_connections.append(websocket)
-        logger.info(f"Nouveau client WS connecté. Total: {len(self.active_connections)}")
-
-    def disconnect(self, websocket: WebSocket):
-        if websocket in self.active_connections:
-            self.active_connections.remove(websocket)
-            logger.info(f"Client WS déconnecté. Total: {len(self.active_connections)}")
-
-    async def broadcast(self, message: str):
-        for connection in list(self.active_connections):
+    async def broadcast(self, message: str) -> None:
+        for ws in list(self.active):
             try:
-                await connection.send_text(message)
-            except Exception as e:
-                logger.error(f"Erreur WS broadcast: {e}")
-                self.disconnect(connection)
+                await ws.send_text(message)
+            except Exception:
+                self.active.discard(ws)
+
 
 manager = ConnectionManager()
+_listener_task: asyncio.Task | None = None
 
-# Background task to listen to Redis Pub/Sub
-async def redis_listener():
-    try:
-        redis_client = redis.from_url(REDIS_URL)
-        pubsub = redis_client.pubsub()
-        await pubsub.subscribe("noc_updates")
-        
-        logger.info("Démarrage du listener Redis Pub/Sub pour les WebSockets...")
-        async for message in pubsub.listen():
-            if message["type"] == "message":
-                data = message["data"].decode("utf-8")
-                # Diffuser le message à tous les clients connectés
-                await manager.broadcast(data)
-    except Exception as e:
-        logger.error(f"Erreur dans le listener Redis: {e}")
 
-# Note: Ideally, `redis_listener` is started on app startup.
-# We will start it lazily on the first WS connection or in main.py.
-listener_task = None
+async def _redis_listener() -> None:
+    """Écoute Redis en boucle et se reconnecte en cas de coupure."""
+    while True:
+        try:
+            client = aioredis.from_url(settings.redis_url)
+            pubsub = client.pubsub()
+            await pubsub.subscribe(UPDATES_CHANNEL)
+            logger.info("Listener Redis Pub/Sub démarré.")
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    await manager.broadcast(message["data"].decode("utf-8"))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Listener Redis interrompu (%s), reconnexion dans 5 s.", exc)
+            await asyncio.sleep(5)
+
+
+def start_redis_listener() -> None:
+    global _listener_task
+    if _listener_task is None or _listener_task.done():
+        _listener_task = asyncio.get_running_loop().create_task(_redis_listener())
+
+
+async def stop_redis_listener() -> None:
+    global _listener_task
+    if _listener_task:
+        _listener_task.cancel()
+        try:
+            await _listener_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        _listener_task = None
+
+
+def _check_token(token: str) -> None:
+    with SessionLocal() as db:
+        user_from_token(token, db)
+
 
 @router.websocket("/updates")
-async def websocket_endpoint(websocket: WebSocket):
-    global listener_task
-    
-    # Démarrer le listener si ce n'est pas fait
-    if listener_task is None:
-        loop = asyncio.get_running_loop()
-        listener_task = loop.create_task(redis_listener())
+async def websocket_endpoint(websocket: WebSocket, token: str = ""):
+    try:
+        await run_in_threadpool(_check_token, token)
+    except HTTPException:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
 
-    await manager.connect(websocket)
+    await websocket.accept()
+    manager.active.add(websocket)
     try:
         while True:
-            # Maintenir la connexion ouverte (on peut aussi utiliser receive_text pour des ping/pong)
-            data = await websocket.receive_text()
+            await websocket.receive_text()  # le client envoie des pings ; on les ignore
     except WebSocketDisconnect:
-        manager.disconnect(websocket)
+        pass
+    finally:
+        manager.active.discard(websocket)

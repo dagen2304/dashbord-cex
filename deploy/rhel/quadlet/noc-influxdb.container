@@ -1,0 +1,27 @@
+[Unit]
+Description=NOC INFRA — InfluxDB (séries temporelles)
+
+[Container]
+ContainerName=noc-influxdb
+Image=docker.io/library/influxdb:2.7.12-alpine
+Network=noc.network
+Volume=noc-influxdb.volume:/var/lib/influxdb2
+EnvironmentFile=/etc/noc/noc.env
+Environment=INFLUX_CONFIGS_PATH=/var/lib/influxdb2/influx-configs
+Secret=noc_influxdb_password,type=env,target=DOCKER_INFLUXDB_INIT_PASSWORD
+Secret=noc_influxdb_token,type=env,target=DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+User=1000
+Group=1000
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=influx ping
+HealthInterval=30s
+PodmanArgs=--memory=2g --cpus=1
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

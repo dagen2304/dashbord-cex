@@ -1,0 +1,33 @@
+[Unit]
+Description=NOC INFRA — API (FastAPI)
+Requires=noc-postgres.service noc-redis.service noc-influxdb.service
+After=noc-postgres.service noc-redis.service noc-influxdb.service
+
+[Container]
+ContainerName=noc-backend
+Image=localhost/noc-backend:current
+Network=noc.network
+EnvironmentFile=/etc/noc/noc.env
+EnvironmentFile=/etc/noc/secrets.env
+Secret=noc_database_url,type=env,target=DATABASE_URL
+# Prioritaire sur un REDIS_URL resté dans noc.env (installations antérieures à 3.2.2).
+Secret=noc_redis_url,type=env,target=REDIS_URL
+Secret=noc_influxdb_token,type=env,target=INFLUXDB_TOKEN
+Secret=noc_secret_key,type=env,target=SECRET_KEY
+Secret=noc_jwt_secret,type=env,target=JWT_SECRET
+Secret=noc_admin_initial_password,type=env,target=ADMIN_INITIAL_PASSWORD
+# AC internes facultatives (équipements, contrôleurs de domaine)
+Volume=/etc/noc/ca:/certs:ro,z
+ReadOnly=true
+DropCapability=ALL
+NoNewPrivileges=true
+HealthCmd=python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"
+HealthInterval=30s
+PodmanArgs=--memory=1g
+
+[Service]
+Restart=always
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target

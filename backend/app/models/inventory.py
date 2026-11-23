@@ -1,5 +1,4 @@
 import base64
-import os
 import uuid
 from datetime import datetime
 from hashlib import sha256
@@ -8,18 +7,19 @@ from sqlalchemy import Column, String, Integer, Boolean, DateTime, Float, Foreig
 from sqlalchemy.orm import relationship
 from app.core.database import Base
 
-# Générer une clé de chiffrement Fernet 32 octets url-safe de manière déterministe
-# Pas de valeur par défaut : une clé connue rendrait tous les mots de passe déchiffrables.
-SECRET_KEY = os.getenv("SECRET_KEY")
-_KNOWN_WEAK_KEYS = {
-    "noc_super_secret_encryption_key_12345",
-    "generate_a_very_secret_key_for_jwt_auth",
-}
-if not SECRET_KEY or len(SECRET_KEY) < 32 or SECRET_KEY in _KNOWN_WEAK_KEYS or SECRET_KEY.startswith("CHANGE_ME"):
-    raise RuntimeError("SECRET_KEY absente ou faible : générez-la avec secrets.token_urlsafe(48)")
-key_hash = sha256(SECRET_KEY.encode()).digest()
-fernet_key = base64.urlsafe_b64encode(key_hash)
+# Clé Fernet dérivée de SECRET_KEY (validée au démarrage par app.core.config).
+from app.core.config import settings
+
+fernet_key = base64.urlsafe_b64encode(sha256(settings.secret_key.encode()).digest())
 cipher_suite = Fernet(fernet_key)
+
+
+# last_sync_status d'un équipement dont la collecte est suspendue après un refus d'identifiants.
+AUTH_FAILED = "AUTH_FAILED"
+
+
+class PasswordDecryptionError(Exception):
+    """Le mot de passe stocké ne peut pas être déchiffré avec la SECRET_KEY actuelle."""
 
 class InfrastructureDevice(Base):
     """
@@ -42,7 +42,14 @@ class InfrastructureDevice(Base):
     is_active = Column(Boolean, default=True)
     is_archived = Column(Boolean, default=False)       # Soft Delete — conserve l'historique InfluxDB
     last_sync_status = Column(String, default="UNSYNCED")   # ONLINE / OFFLINE / ERROR / UNSYNCED
-    last_sync_at = Column(DateTime, nullable=True)     # Horodatage du dernier cycle de polling réussi
+    last_sync_at = Column(DateTime, nullable=True)     # Horodatage du dernier cycle de polling
+    last_sync_error = Column(String, nullable=True)    # Dernière erreur de collecte (affichée dans l'inventaire)
+
+    # Vérification de la connexion (voir app/services/tls.py) : verify | pin | insecure.
+    # Nouveaux équipements : « verify ». Équipements existants avant la v3 : « insecure » (migration),
+    # signalés dans l'interface jusqu'à ce qu'un administrateur épingle leur empreinte.
+    tls_mode = Column(String, nullable=False, default="verify")
+    tls_fingerprint = Column(String, nullable=True)  # SHA-256 du certificat (ou de la clé d'hôte SSH)
 
     # Relations de liaison
     discovery_record = relationship("ServiceDiscovery", back_populates="device", uselist=False, cascade="all, delete-orphan")
@@ -59,12 +66,14 @@ class InfrastructureDevice(Base):
 
     def get_password(self) -> str:
         """
-        Déchiffre symétriquement le mot de passe pour utilisation interne.
+        Déchiffre le mot de passe pour usage interne (collecteurs uniquement).
+        Lève PasswordDecryptionError plutôt que de renvoyer une chaîne vide :
+        une connexion sans mot de passe verrouillerait le compte de service.
         """
         try:
             return cipher_suite.decrypt(self.encrypted_password.encode()).decode()
-        except Exception:
-            return ""
+        except Exception as exc:
+            raise PasswordDecryptionError(self.display_name) from exc
 
 class ServiceDiscovery(Base):
     """

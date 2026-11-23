@@ -3,6 +3,7 @@ import re
 from typing import Dict, Any, Optional
 
 from app.services.base_collector import BaseCollector
+from app.services.tls import ssh_host_key_policy
 
 logger = logging.getLogger(__name__)
 
@@ -42,9 +43,10 @@ class VeritasCollector(BaseCollector):
         password = self.config.get("password", "")
 
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
         try:
+            # Clé d'hôte vérifiée par son empreinte épinglée (ou non vérifiée en mode « insecure »).
+            client.set_missing_host_key_policy(ssh_host_key_policy(self.tls_policy, self.device_name))
             logger.info(f"[VeritasAccess] Connexion SSH à {host}:{port} en tant que '{user}'")
             client.connect(
                 hostname=host,
@@ -138,6 +140,7 @@ class VeritasCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[VeritasAccess] ✗ Connexion SSH échouée pour {host}:{port}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion SSH Veritas Access {host}:{port} échouée — {type(e).__name__}: {e}",

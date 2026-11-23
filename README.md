@@ -1,172 +1,114 @@
-# NOC INFRA Central Dashboard
+# NOC INFRA — Dashboard de supervision (v3)
 
-Une plateforme moderne de supervision NOC (Network Operations Center) en temps réel pour monitorer un environnement d'infrastructure hétérogène : virtualisation (vSphere vCenter) et baies de stockage/sauvegarde (Dell Unity, Huawei Dorado, Dell PowerStore, DataDomain, Scality, NetBackup, Veritas Access).
+Supervision centralisée de l'infrastructure : virtualisation (VMware vCenter), stockage (Huawei Dorado, Dell Unity, Dell PowerStore, Veritas Access), sauvegarde (DataDomain, NetBackup) et stockage objet (Scality RING).
 
----
+Ce qui a changé dans la refonte, et ce qui reste à faire : **[docs/REFONTE.md](docs/REFONTE.md)**.
 
-## 🛠️ Stack Technique
-
-* **Backend** : FastAPI (Python 3.10), Celery (gestion des tâches périodiques), Redis (broker/cache).
-* **Frontend** : React.js (Vite), TypeScript, Tailwind CSS, Shadcn/ui (UI Premium), Recharts (Graphiques de charge/latence).
-* **Bases de données** : 
-  * **PostgreSQL** : Modèles relationnels (inventaire, utilisateurs, rôles, alertes historisées).
-  * **InfluxDB 2.x** : Base de données de séries temporelles pour les métriques de performance brutes (IOPS, Latence, Débit, CPU/MEM).
-
----
-
-## 📂 Structure du Projet
+## Architecture
 
 ```
-v2-dashboard/
-├── docker-compose.yml           # Orchestration PRODUCTION
-├── docker-compose.dev.yml       # Override DÉVELOPPEMENT (hot-reload, ports DB)
-├── .env.example                 # Variables d'environnement (template)
-├── README.md                    # Documentation globale
-├── backend/                     # Service API et collecteurs
-│   ├── Dockerfile               # Image production (non-root, healthcheck, 4 workers)
-│   ├── requirements.txt         # Dépendances Python
-│   ├── main.py                  # Point d'entrée FastAPI
-│   └── app/                     # Code de l'application
-│       ├── core/                # Configuration, Postgres, InfluxDB, Celery
-│       ├── api/                 # Contrôleurs et Routes FastAPI
-│       ├── models/              # Tables PostgreSQL (SQLAlchemy)
-│       ├── schemas/             # Validation Pydantic
-│       ├── services/            # Collecteurs et SDK (pyVmomi, REST)
-│       └── tasks/               # Tâches asynchrones Celery
-└── frontend/                    # Interface utilisateur web
-    ├── Dockerfile               # Image production (multi-stage → Nginx)
-    ├── Dockerfile.dev           # Image développement (Vite hot-reload)
-    ├── nginx.conf               # Configuration Nginx (SPA, gzip, cache)
-    ├── package.json             # Dépendances Node (React, Recharts)
-    └── src/                     # Code source React
-        ├── components/          # Composants UI (Shadcn, Graphiques)
-        ├── hooks/               # WebSockets, HTTP Custom Hooks
-        ├── store/               # Zustand global state
-        └── types/               # Interfaces TypeScript
+navigateur ──> Nginx (:80) ──/──────> interface React (fichiers statiques)
+                    └──────/api────> API FastAPI ──> PostgreSQL (inventaire, utilisateurs, audit, historique capacitaire)
+                                         │      └──> InfluxDB  (séries temporelles)
+                                         └─────────> Redis     (dernier état, verrous, temps réel)
+
+celery beat ──15 s──> dispatch_polling ──> collect_device(id)  ──> équipements (lecture seule)
+                                                 └──> InfluxDB, PostgreSQL, Redis ──pub/sub──> WebSocket
 ```
 
----
+- **Seuls les workers Celery contactent les équipements.** L'API lit uniquement les bases et Redis.
+- **Une tâche de collecte par équipement**, protégée par un verrou. L'intervalle se règle dans l'interface.
+- **Aucune valeur inventée** : une donnée absente ou trop ancienne est affichée comme telle.
 
-## 🚀 Démarrage Rapide
+## Stack
 
-### Prérequis
+| | |
+|---|---|
+| Backend | Python 3.12, FastAPI, SQLAlchemy 2.1 (psycopg 3), Celery, Pydantic Settings |
+| Interface | React 18, TypeScript, Vite, Tailwind CSS, TanStack Query, Recharts |
+| Données | PostgreSQL 15, InfluxDB 2.7, Redis 7 |
+| Sécurité | JWT + rôles (`viewer`, `operator`, `admin`), bcrypt, journal d'audit, CSP |
 
-* **Docker** et **Docker Compose** (v2+) installés sur votre machine.
-
-### Étape 1 : Configuration des variables d'environnement
+## Démarrage
 
 ```bash
 cp .env.example .env
 ```
 
-Éditez le fichier `.env` et renseignez vos mots de passe et clés secrètes :
+Remplacez chaque `CHANGE_ME` dans `.env`. Pour générer une valeur :
 
 ```bash
-# Générer une clé secrète JWT
-python -c "import secrets; print(secrets.token_hex(32))"
+python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 
-> ⚠️ **Ne jamais commiter le fichier `.env` dans Git.**
+`SECRET_KEY` et `JWT_SECRET` doivent être **différents**. Le backend refuse de démarrer sinon.
 
-### Étape 2 : Lancement
-
-#### 🔧 Mode Développement (hot-reload, ports DB exposés)
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
-```
-
-| Service | URL | Description |
-|---|---|---|
-| **Frontend** | http://localhost:3000 | Vite dev server (hot-reload) |
-| **API Swagger** | http://localhost:8000/docs | Documentation interactive FastAPI |
-| **InfluxDB** | http://localhost:8086 | Console d'administration |
-| **PostgreSQL** | `localhost:5432` | Accès direct BDD |
-| **Redis** | `localhost:6379` | Accès direct broker |
-
-#### 🚀 Mode Production
+Production :
 
 ```bash
 docker compose up -d --build
 ```
 
-| Service | URL | Description |
-|---|---|---|
-| **Frontend** | http://localhost:80 | Nginx (fichiers statiques optimisés) |
-| **API** | http://localhost:8000 | Uvicorn multi-worker |
+Ouvrez `http://<serveur>/` et connectez-vous avec `ADMIN_USERNAME` / `ADMIN_INITIAL_PASSWORD`. Changez ensuite ce mot de passe dans « Mon compte ».
 
-> En production, les ports PostgreSQL, Redis et InfluxDB ne sont **pas** exposés sur l'hôte — accessibles uniquement sur le réseau Docker interne.
-
-### Étape 3 : Vérification
+Développement (ports des bases et de l'API exposés, rechargement à chaud du backend) :
 
 ```bash
-# Vérifier l'état de tous les conteneurs
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+```
+
+Interface en développement (Vite relaie `/api` vers `localhost:8000`) :
+
+```bash
+cd frontend && npm ci && npm run dev
+```
+
+## Tests
+
+```bash
+cd backend && python -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
+```
+
+```bash
+cd backend && .venv/bin/python -m pytest tests -q
+```
+
+```bash
+cd frontend && npm run build
+```
+
+## Mode démonstration
+
+Pour un environnement de test ou de formation, `DEMO_DATA=true` crée 10 équipements fictifs : vCenter, vRealize Operations, baies, sauvegarde et objet, avec leurs VMs, datastores, alertes, saturations et historique capacitaire. Leurs données sont rafraîchies chaque minute par le même pipeline que les vraies collectes.
+
+- Leurs adresses se terminent par `.demo.invalid`, un domaine réservé : la collecte réelle les ignore toujours.
+- L'interface les signale par un badge « Démo ».
+- Pour les retirer, il suffit de les archiver depuis l'inventaire, puis de repasser `DEMO_DATA=false`.
+
+**Ne jamais l'activer en production.**
+
+## Rôles
+
+| Rôle | Peut |
+|---|---|
+| Lecteur (`viewer`) | consulter tous les écrans |
+| Opérateur (`operator`) | + exporter les rapports, gérer les applications, acquitter les alertes |
+| Administrateur (`admin`) | + gérer les équipements, les paramètres, les utilisateurs ; consulter le journal d'audit |
+
+## Vérifications
+
+```bash
 docker compose ps
-
-# Vérifier les healthchecks
-docker inspect --format='{{.State.Health.Status}}' noc_backend noc_postgres noc_redis noc_influxdb
-
-# Tester l'API
-curl http://localhost:8000/health
 ```
-
----
-
-## 🏗️ Architecture Docker
-
-### Services
-
-| Service | Image | Rôle | Healthcheck |
-|---|---|---|---|
-| `db` | `postgres:15-alpine` | Base relationnelle (inventaire, users) | `pg_isready` |
-| `influxdb` | `influxdb:2.7-alpine` | Métriques temps réel (IOPS, latence) | `curl /health` |
-| `redis` | `redis:7-alpine` | Broker Celery + cache | `redis-cli ping` |
-| `backend` | Custom (Python 3.10) | API FastAPI (4 workers, non-root) | `curl /health` |
-| `celery_worker` | Custom (Python 3.10) | Exécution des tâches de polling | — |
-| `celery_beat` | Custom (Python 3.10) | Planificateur de polling récurrent | — |
-| `frontend` | Custom (Nginx / Node) | Interface web React | `wget /` |
-
-### Sécurité Production
-
-* **Utilisateur non-root** : le backend s'exécute sous `appuser` (UID 1001).
-* **Ports fermés** : seuls le frontend (80) et le backend (8000) sont exposés en prod.
-* **Healthchecks** : tous les services critiques sont monitorés et redémarrés automatiquement.
-* **Limites mémoire** : chaque service a un plafond RAM configuré via `deploy.resources.limits`.
-* **Headers sécurité** : Nginx ajoute `X-Frame-Options`, `X-Content-Type-Options`, `X-XSS-Protection`.
-
----
-
-## 📡 Liste des Collecteurs Intégrés
-
-1. **Virtualisation** : Connecteur `pyvmomi` pour extraire la charge CPU/MEM des hyperviseurs et VMs.
-2. **Dell Unity** : Client REST API pour récupérer l'état des LUNs, des Storage Pools et la latence.
-3. **Huawei Dorado** : Client REST API pour requêter les métriques d'IOPS et de réplication.
-4. **Dell PowerStore** : Client REST API pour la télémétrie matérielle et l'espace utilisable.
-5. **DataDomain** : Agent SNMP/REST pour collecter les taux de déduplication et l'état des disques.
-6. **Scality** : Client REST/S3 pour la volumétrie des Buckets et l'état des nœuds Ring.
-7. **Veritas NetBackup** : REST API pour analyser les statuts de jobs de sauvegarde quotidiens.
-8. **Veritas Access** : Intégration CLI/REST pour superviser les partages CIFS/NFS.
-
----
-
-## 🧹 Commandes Utiles
 
 ```bash
-# Arrêter la stack
-docker compose down
-
-# Arrêter la stack ET supprimer les volumes (⚠️ perte des données)
-docker compose down -v
-
-# Voir les logs d'un service spécifique
-docker compose logs -f backend
-docker compose logs -f frontend
-
-# Accéder au shell d'un conteneur
-docker exec -it noc_backend sh
-docker exec -it noc_postgres psql -U noc_admin -d noc_dashboard
-
-# Reconstruire un seul service
-docker compose build backend
-docker compose up -d --no-deps backend
+docker compose exec backend curl -fs http://localhost:8000/ready
 ```
+
+`/health` (vivacité) et `/ready` (PostgreSQL et Redis joignables) ne sont exposés que sur le réseau Docker interne.
+
+## Documentation
+
+- [docs/REFONTE.md](docs/REFONTE.md) : refonte v3, procédure de mise en production, lot 2
+- [docs/DEPLOIEMENT_RHEL.md](docs/DEPLOIEMENT_RHEL.md) : **production sur serveur RHEL** (Podman + Quadlet, installation hors ligne, sauvegardes, mises à jour, flux réseau)
+- [docs/ROTATION_SECRETS.md](docs/ROTATION_SECRETS.md) : rotation des secrets (phase 0)

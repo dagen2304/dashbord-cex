@@ -1,11 +1,9 @@
 import logging
 import requests
-import urllib3
 from typing import Dict, Any
 
 from app.services.base_collector import BaseCollector
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 logger = logging.getLogger(__name__)
 
 
@@ -46,15 +44,14 @@ class ScalityCollector(BaseCollector):
         else:
             host_port = f"{host}:{port}"
 
-        session = requests.Session()
-        session.verify = False
+        session = self.http_session()  # politique TLS de l'équipement (verify / pin / insecure)
         if user and password:
             session.auth = (user, password)
             
-        session.headers.update({
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        })
+        # Pas de Content-Type sur les GET : l'API Supervisor (Flask / Eve) tente alors de décoder
+        # un corps JSON vide et répond HTTP 400 « The browser (or proxy) sent a request that
+        # this server could not understand ».
+        session.headers.update({"Accept": "application/json"})
 
         protocol = "http" if port in (80, 8080) else "https"
         
@@ -83,27 +80,32 @@ class ScalityCollector(BaseCollector):
                 if data_ring:
                     logger.info(f"[Scality] Collecte réussie pour {self.device_name} ({host}) - Ring: {data_ring.get('name')} (Firmware: {firmware})")
                     
-                    # Capacity metrics (Scality returns values in bytes)
-                    total_bytes = data_ring.get("diskspace_total", 0)
-                    used_bytes = data_ring.get("diskspace_used", 0)
-                    
-                    # Convert to TB
-                    total_tb = round(total_bytes / (1024 ** 4), 2)
-                    used_tb = round(used_bytes / (1024 ** 4), 2)
-                    usage_pct = round((used_bytes / total_bytes) * 100, 1) if total_bytes > 0 else 0.0
-                    
-                    total_nodes = data_ring.get("number_of_nodes", 0)
-                    active_nodes = total_nodes  # Based on cex-monitor mapping
-                    
-                    payload["status"] = "HEALTHY" if data_ring.get("status") == "OK" else "WARNING"
-                    payload["metrics"] = {
-                        "capacity_total_tb": total_tb,
-                        "capacity_used_tb": used_tb,
-                        "capacity_usage_pct": usage_pct,
-                        "iops_s3": 0,
-                        "active_nodes": active_nodes,
-                        "total_nodes": total_nodes,
-                    }
+                    # Aucune valeur inventée : un champ absent reste absent (ni 0, ni copie d'un autre).
+                    # L'ancien code mettait iops_s3 à 0 en dur et active_nodes = total_nodes.
+                    metrics: Dict[str, Any] = {}
+                    not_collected = []
+                    total_bytes, used_bytes = data_ring.get("diskspace_total"), data_ring.get("diskspace_used")
+                    if isinstance(total_bytes, (int, float)) and total_bytes > 0 and isinstance(used_bytes, (int, float)):
+                        metrics.update(capacity_total_tb=round(total_bytes / 1024 ** 4, 2),     # octets → To
+                                       capacity_used_tb=round(used_bytes / 1024 ** 4, 2),
+                                       capacity_usage_pct=round(used_bytes / total_bytes * 100, 1))
+                    else:
+                        not_collected.append("capacité (diskspace_total / diskspace_used absents)")
+                    if isinstance(data_ring.get("number_of_nodes"), int):
+                        metrics["total_nodes"] = data_ring["number_of_nodes"]
+                    ring_status = data_ring.get("status")
+                    alerts = []
+                    if ring_status == "OK":
+                        payload["status"] = "HEALTHY"
+                    else:
+                        payload["status"] = "WARNING"
+                        alerts.append({"severity": "WARNING", "component": f"Ring {data_ring.get('name') or data_ring.get('id')}",
+                                       "message": f"État du ring : {ring_status or 'inconnu'}"})
+                    if not_collected:
+                        alerts.append({"severity": "INFO", "component": "RING-Supervisor",
+                                       "message": "Non collecté, laissé vide : " + " ; ".join(not_collected)})
+                    payload["metrics"] = metrics
+                    payload["alerts"] = alerts
                 else:
                     raise Exception("Aucun Ring trouvé dans la réponse Scality.")
             else:
@@ -114,6 +116,7 @@ class ScalityCollector(BaseCollector):
         except Exception as e:
             logger.error(f"[Scality] ✗ Erreur de collecte pour {host}: {e}")
             payload["status"] = "OFFLINE"
+            self.mark_failure(payload, e)
             payload["alerts"] = [{
                 "severity": "CRITICAL",
                 "message": f"Connexion Scality RING {host}:{port} échouée — {type(e).__name__}: {e}",

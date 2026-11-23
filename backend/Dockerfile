@@ -1,32 +1,26 @@
-FROM python:3.10-slim-bullseye
+# Image backend sans aucun appel à apt : toutes les dépendances sont des wheels
+# précompilés (--only-binary=:all:). La construction n'a besoin que de Docker Hub et
+# de PyPI, et échoue immédiatement si un wheel venait à manquer.
 
-WORKDIR /app
-
-# Installer les dépendances système nécessaires
-# --fix-missing : robustesse en cas d'erreur réseau transitoire sur les mirrors Debian
-RUN apt-get update && apt-get install -y --no-install-recommends --fix-missing \
-    build-essential \
-    libpq-dev \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copier et installer les dépendances Python (layer cachée si requirements.txt inchangé)
+# ── Étape 1 : dépendances Python ──
+FROM python:3.12.16-slim-trixie AS build
+ARG PIP_INDEX_URL=https://pypi.org/simple
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --only-binary=:all: --prefix=/install -r requirements.txt
 
-# Copier le reste du code
-COPY . .
-
-# ── Sécurité : utilisateur non-root ──────────────────────────────────────
+# ── Étape 2 : image d'exécution ──
+FROM python:3.12.16-slim-trixie
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 RUN addgroup --system --gid 1001 appgroup \
-    && adduser --system --uid 1001 --ingroup appgroup appuser
+    && adduser --system --uid 1001 --ingroup appgroup --no-create-home appuser
+COPY --from=build /install /usr/local
+WORKDIR /app
+COPY --chown=appuser:appgroup app ./app
+COPY --chown=appuser:appgroup scripts ./scripts
+COPY --chown=appuser:appgroup main.py .
 USER appuser
-
 EXPOSE 8000
-
-# ── Healthcheck intégré ──────────────────────────────────────────────────
-HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD curl -f http://localhost:8000/health || exit 1
-
-# ── Production : workers multiples, pas de hot-reload ────────────────────
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=4)"]
+# --proxy-headers : l'IP client réelle vient de Nginx (journal d'audit, anti-bruteforce)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4", "--proxy-headers", "--forwarded-allow-ips", "*"]
