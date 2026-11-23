@@ -53,7 +53,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(
     title="NOC INFRA Central API",
     description="Supervision vCenter et baies de stockage / sauvegarde.",
-    version="3.3.8",
+    version="3.3.9",
     lifespan=lifespan,
 )
 

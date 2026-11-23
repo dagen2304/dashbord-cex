@@ -213,6 +213,10 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 - **Erreurs lisibles** : le message de NetBackup (`errorMessage`, `errorCode`) est affiché ; HTTP 401 suspend la collecte (identifiants refusés).
 - **Aucune valeur inventée** : sans job terminé sur 24 h, le taux de réussite est inconnu (et non 100 %) ; succès partiel (code 1) compté comme réussi ; media servers illisibles laissés vides et signalés. Jobs lus par pages de 100.
 
+### NetBackup : filtre des jobs (3.3.9)
+
+Le filtre OData des jobs des dernières 24 h écrivait la date entre guillemets (`startTime ge '…Z'`) ; NetBackup 10.5 le rejette (HTTP 400, code 9401). Date désormais sans guillemets (`startTime ge 2026-11-23T10:00:00Z`) ; la forme entre guillemets n'est essayée qu'en repli. Ce défaut existait avant 3.3.6 mais restait masqué par l'échec de connexion.
+
 ### NetBackup : media servers (3.3.8)
 
 - **Tableau « Media servers »** sur la fiche du serveur primaire : nom, rôle (primaire / media server), état NetBackup (actif disque, bande, bande et disque, hors ligne), joignable, version NetBackup, système. Source : `GET /netbackup/config/media-servers` en **version 12.0** de l'API (celle de l'interface web NetBackup 10.x) ; en version 4.0, NetBackup 10.5 renvoie une liste vide. Repli automatique si le serveur ne connaît pas la version 12.0 (HTTP 406).

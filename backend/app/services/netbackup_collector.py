@@ -155,20 +155,29 @@ class NetBackupCollector(BaseCollector):
             now = datetime.now(timezone.utc)
             since_24h = (now - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+            # Filtre OData : date SANS guillemets (startTime ge 2026-11-23T10:00:00Z). Entre
+            # guillemets, NetBackup 10.5 rejette le filtre (HTTP 400, code 9401). La forme entre
+            # guillemets n'est essayée qu'en repli, pour d'éventuelles versions plus anciennes.
             # Pages de 100 (maximum de l'API) ; garde-fou à 50 pages.
             jobs_data = []
-            for page in range(50):
+            filters = [f"startTime ge {since_24h}", f"startTime ge '{since_24h}'"]
+            page = 0
+            while page < 50:
                 jobs_resp = session.get(
                     f"{base_url}/admin/jobs",
-                    params={"filter": f"startTime ge '{since_24h}'", "page[limit]": 100, "page[offset]": page * 100},
+                    params={"filter": filters[0], "page[limit]": 100, "page[offset]": page * 100},
                     timeout=self._TIMEOUT,
                 )
+                if jobs_resp.status_code == 400 and page == 0 and len(filters) > 1:
+                    filters.pop(0)   # syntaxe refusée : essai de l'autre forme
+                    continue
                 if not jobs_resp.ok:
                     raise ValueError(f"lecture des jobs refusée (HTTP {jobs_resp.status_code}) : {self._nbu_error(jobs_resp)}")
                 batch = jobs_resp.json().get("data", [])
                 jobs_data.extend(batch)
                 if len(batch) < 100:
                     break
+                page += 1
 
             jobs_total = len(jobs_data)
             jobs_failed = 0

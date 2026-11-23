@@ -145,3 +145,25 @@ def test_media_servers_fallback_when_version_unknown(monkeypatch):
                    Old({("POST", "/netbackup/login"): (201, {"token": "t"}), ("GET", "/netbackup/admin/jobs"): (200, {"data": []})}),
                    monkeypatch)
     assert len(calls) == 2 and payload["metrics"]["media_servers_total"] == 4
+
+
+def test_jobs_filter_date_is_unquoted(monkeypatch):
+    """Régression : NetBackup 10.5 rejette « startTime ge '…' » (HTTP 400, code 9401)."""
+    from urllib.parse import parse_qs, urlsplit
+    filters = []
+
+    class OData(Fake):
+        def send(self, request, **kw):
+            if request.path_url.startswith("/netbackup/admin/jobs"):
+                f = parse_qs(urlsplit(request.url).query)["filter"][0]
+                filters.append(f)
+                if "'" in f:
+                    self.routes[("GET", "/netbackup/admin/jobs")] = (400, {"errorCode": 9401, "errorMessage": "The OData filter criteria is invalid."})
+                else:
+                    self.routes[("GET", "/netbackup/admin/jobs")] = (200, JOBS)
+            return super().send(request, **kw)
+    payload = _run(NetBackupCollector("n", "NBU", _cfg(port=1556, username="svc")),
+                   OData({("POST", "/netbackup/login"): (201, {"token": "t"})}), monkeypatch)
+    assert payload["status"] != "OFFLINE", payload["alerts"]
+    assert len(filters) == 1 and "'" not in filters[0] and filters[0].startswith("startTime ge 20")
+    assert payload["metrics"]["jobs_total"] == 4
