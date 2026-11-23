@@ -20,6 +20,12 @@ _STATEMENTS = [
     "ALTER TABLE infrastructure_devices ADD COLUMN IF NOT EXISTS tls_fingerprint VARCHAR",
     "ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_source VARCHAR(16) NOT NULL DEFAULT 'local'",
     "CREATE INDEX IF NOT EXISTS ix_metrics_history_device_ts ON metrics_history (device_id, resource_name, timestamp)",
+    # 3.3.3 — historique faux des PowerStore (< 3.3.3) : la somme des tailles de volumes servait à la
+    # fois de capacité et d'utilisé (100 %). Signature exacte de ce défaut : utilisé = capacité.
+    # Supprime seulement ces points, pour ne pas fausser la projection de saturation.
+    """DELETE FROM metrics_history WHERE resource_name = 'Capacité globale'
+         AND capacity_used_tb = capacity_total_tb AND capacity_total_tb > 0
+         AND device_id IN (SELECT id FROM infrastructure_devices WHERE device_type = 'DELL_POWERSTORE')""",
 ]
 
 

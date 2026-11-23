@@ -205,6 +205,17 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### Dell PowerStore : collecteur réécrit (3.3.3)
+
+Le collecteur hérité de la v2 affichait des valeurs inventées : capacité à 100 % (somme des tailles des volumes, c'est-à-dire l'espace *promis*, utilisée comme capacité ET comme utilisé), IOPS / latence / débit à 0, réduction « 1 × », et aucune alerte (requête invalide). Cause : les séries de métriques PowerStore ne se lisent pas en GET, elles sont calculées par `POST /api/rest/metrics/generate`.
+
+- **Session** : `GET /login_session` (Basic) → cookie + jeton anti-CSRF `DELL-EMC-TOKEN` (obligatoire sur les POST) ; `POST /logout` en fin de cycle.
+- **Capacité** : `space_metrics_by_appliance` (`physical_total`, `physical_used`, `data_reduction`), point le plus récent, cumulé sur les appliances.
+- **Performance** : `performance_metrics_by_appliance` (`total_iops`, `avg_latency` en µs, `total_bandwidth` en octets/s), intervalle 20 s puis 5 min.
+- **Alertes** : `alert` à l'état ACTIVE, sévérités Critical (critique), Major et Minor (attention), libellé `description_l10n`.
+- **Aucune valeur inventée** : une métrique illisible reste vide et la cause est signalée (alerte INFO).
+- **Historique** : les points faux (utilisé = capacité) sont supprimés au démarrage, pour ne pas fausser la projection de saturation.
+
 ### Pools de stockage Huawei Dorado (3.3.2)
 
 - **Détail par pool** sur la fiche de la baie : état (santé, fonctionnement), capacité, utilisé, libre, utilisation avec le seuil d'alarme configuré sur la baie, souscription (surallocation signalée au-delà de 100 %). Champs lus dans `storagepool` (`USERTOTALCAPACITY`, `USERCONSUMEDCAPACITY`, `USERFREECAPACITY`, `SUBSCRIBEDCAPACITY`, `USERCONSUMEDCAPACITYTHRESHOLD`, `HEALTHSTATUS`, `RUNNINGSTATUS`) ; un champ absent reste vide.
