@@ -161,19 +161,26 @@ class DoradoCollector(BaseCollector):
             usage_pct = round((used_capacity_bytes / total_capacity_bytes * 100), 1) if total_capacity_bytes > 0 else 0.0
 
             # ── 3. Métriques de performance (Dorado API performancestatistictask/0 comme dans cex-monitor) ──
-            iops = 0
-            latency_ms = 0.0
-            throughput_mb = 0.0
-
+            # Aucune valeur par défaut : une mesure absente reste absente (jamais 0).
+            perf_metrics: Dict[str, Any] = {}
+            not_collected: list = []
             try:
                 perf_resp = session.get(f"{base}/performancestatistictask/0", timeout=60)
-                if perf_resp.ok and perf_resp.json().get("error", {}).get("code", -1) == 0:
-                    p = perf_resp.json().get("data", {})
-                    iops = round(float(p.get("IOPS", 0)), 0)
-                    throughput_mb = round(float(p.get("BANDWIDTH", 0)) / 1024, 2)  # KB/s → MB/s
-                    latency_ms = round(float(p.get("LATENCY", 0)) / 1000, 2)       # μs → ms
+                body = perf_resp.json() if perf_resp.ok else {}
+                if perf_resp.ok and (body.get("error") or {}).get("code", -1) == 0:
+                    p = body.get("data") or {}
+                    for key, field, factor, digits in (("IOPS", "iops", 1, 0), ("BANDWIDTH", "throughput_mb", 1 / 1024, 2),
+                                                       ("LATENCY", "latency_ms", 1 / 1000, 2)):   # Ko/s → Mo/s ; µs → ms
+                        try:
+                            perf_metrics[field] = round(float(p[key]) * factor, digits)
+                        except (KeyError, TypeError, ValueError):
+                            not_collected.append(f"performance : {key} absent de la réponse")
+                else:
+                    not_collected.append(f"performance indisponible (HTTP {perf_resp.status_code}, "
+                                         f"code {(body.get('error') or {}).get('code', '?')})")
             except Exception as perf_err:
                 logger.warning(f"[Dorado] Perf stats indisponibles: {perf_err}")
+                not_collected.append(f"performance indisponible ({type(perf_err).__name__})")
 
             # ── 4. Contrôleurs ────────────────────────────────────────────
             controllers_total = 0
@@ -238,10 +245,11 @@ class DoradoCollector(BaseCollector):
             payload["status"] = status
             payload["alerts"] = alerts
             payload["storage_pools"] = storage_pools
+            if not_collected:
+                alerts.append({"severity": "INFO", "component": "OceanStor-REST",
+                               "message": "Non collecté, laissé vide : " + " ; ".join(not_collected)})
             payload["metrics"] = {
-                "iops": iops,
-                "latency_ms": latency_ms,
-                "throughput_mb": throughput_mb,
+                **perf_metrics,
                 "capacity_total_tb": total_tb,
                 "capacity_used_tb": used_tb,
                 "capacity_usage_pct": usage_pct,
@@ -250,7 +258,7 @@ class DoradoCollector(BaseCollector):
             }
 
             logger.info(
-                f"[Dorado] ✓ IOPS={iops}, Latence={latency_ms}ms, "
+                f"[Dorado] ✓ IOPS={perf_metrics.get('iops', '—')}, Latence={perf_metrics.get('latency_ms', '—')}ms, "
                 f"Capacité={usage_pct}% ({used_tb}/{total_tb} TB)"
             )
             return payload

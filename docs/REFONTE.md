@@ -205,6 +205,12 @@ Design : skill **UI UX Pro Max** (style « Minimalism & Swiss », densité table
 | Paramètres | Collecte, seuils, SMTP ; utilisateurs et rôles ; journal d'audit (administrateur). |
 | Mon compte | Profil et changement de mot de passe. |
 
+### Performance Dorado et Unity : jamais 0 par défaut (3.3.4)
+
+- **Principe** : une mesure de performance indisponible reste **vide** (« — » à l'écran) et la cause est signalée par une alerte INFO « Non collecté, laissé vide : … ». Elle n'est plus remplacée par 0, qui se confondait avec une baie à l'arrêt.
+- **Unity** : l'ancien code lisait `/api/types/system/0`, adresse inexistante, et des champs absents de l'objet système : IOPS et débit étaient toujours à 0. IOPS et débit viennent désormais de l'historique de métriques de la baie (`types/metricValue`, chemins `sp.*.storage.summary.readsRate`, `writesRate`, `readBytesRate`, `writeBytesRate`, dernière valeur sommée sur les deux SP). La latence n'est pas collectée (pas de valeur au niveau de la baie dans cet historique).
+- **Dorado** : même source qu'avant (`performancestatistictask/0`), mais chaque mesure absente reste vide.
+
 ### Dell PowerStore : collecteur réécrit (3.3.3)
 
 Le collecteur hérité de la v2 affichait des valeurs inventées : capacité à 100 % (somme des tailles des volumes, c'est-à-dire l'espace *promis*, utilisée comme capacité ET comme utilisé), IOPS / latence / débit à 0, réduction « 1 × », et aucune alerte (requête invalide). Cause : les séries de métriques PowerStore ne se lisent pas en GET, elles sont calculées par `POST /api/rest/metrics/generate`.
