@@ -64,3 +64,15 @@ def test_no_jobs_means_unknown_rate_not_100(monkeypatch):
     payload, _ = _nbu(monkeypatch, {("POST", "/netbackup/login"): (201, {"token": "t"}),
                                     ("GET", "/netbackup/admin/jobs"): (200, {"data": []})})
     assert "backup_success_rate" not in payload["metrics"] and payload["metrics"]["jobs_total"] == 0
+
+
+def test_account_formats():
+    parse = NetBackupCollector.parse_account
+    assert parse("svc", "nbu") == ("unixpwd", "nbu", "svc")
+    assert parse("ADCM\\svc", "nbu") == ("NT", "ADCM", "svc")
+    assert parse("ldap:adcm.orangecm\\svc", "nbu") == ("ldap", "adcm.orangecm", "svc")
+    assert parse("LDAP:adcm.orangecm\\svc", "nbu") == ("ldap", "adcm.orangecm", "svc")
+    assert parse("vx:NBU_DOMAIN\\svc", "nbu") == ("vx", "NBU_DOMAIN", "svc")
+    import pytest
+    with pytest.raises(ValueError):
+        parse("kerberos:X\\svc", "nbu")

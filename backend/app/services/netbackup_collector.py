@@ -15,8 +15,7 @@ class NetBackupCollector(BaseCollector):
     API  : REST NetBackup API sur HTTPS port 1556
     Auth : POST /netbackup/login → jeton JWT, envoyé TEL QUEL dans « Authorization »
            (NetBackup n'utilise pas le préfixe « Bearer »).
-           Compte Active Directory : saisir « DOMAINE\\utilisateur » (domainType NT) ;
-           compte local du serveur primaire : « utilisateur » (domainType unixpwd).
+           Compte : voir parse_account (local, DOMAINE\\utilisateur, ldap:domaine\\utilisateur).
     Adresse : le NOM du serveur tel qu'il figure dans son certificat web. Appelé par une
            autre adresse (ex. son IP), NetBackup refuse la connexion (errorCode 8963).
 
@@ -31,6 +30,30 @@ class NetBackupCollector(BaseCollector):
     _DEFAULT_PORT = 1556
     _TIMEOUT = 60
     _API_VERSION = "v4.0"
+
+    DOMAIN_TYPES = {"unixpwd": "unixpwd", "nt": "NT", "ldap": "ldap", "vx": "vx"}
+
+    @classmethod
+    def parse_account(cls, user: str, host: str):
+        """Compte NetBackup saisi dans l'inventaire → (domainType, domainName, userName).
+
+            utilisateur                    compte local du serveur primaire (unixpwd)
+            DOMAINE\\utilisateur            Active Directory, serveur primaire Windows (NT)
+            ldap:domaine.local\\utilisateur domaine LDAP / AD configuré dans NetBackup : cas d'un
+                                           serveur primaire Linux ou d'une NetBackup Appliance
+            nt: / vx: / unixpwd: …         type de domaine explicite
+        """
+        dtype = None
+        head = user.split("\\", 1)[0]
+        if ":" in head:
+            prefix, user = user.split(":", 1)
+            dtype = cls.DOMAIN_TYPES.get(prefix.strip().lower())
+            if dtype is None:
+                raise ValueError(f"type de domaine NetBackup inconnu : « {prefix} » (unixpwd, nt, ldap ou vx)")
+        if "\\" in user:
+            domain, name = user.split("\\", 1)
+            return dtype or "NT", domain, name
+        return dtype or "unixpwd", host, user
 
     @staticmethod
     def _nbu_error(resp) -> str:
@@ -71,11 +94,7 @@ class NetBackupCollector(BaseCollector):
                 session.headers.update({"Authorization": api_key})
                 logger.info(f"[NetBackup] Utilisation de l'API Key pour {host}:{port}")
             else:
-                if "\\" in user:   # compte Active Directory : DOMAINE\utilisateur
-                    domain_name, user_name = user.split("\\", 1)
-                    domain_type = "NT"
-                else:                # compte local du serveur primaire
-                    domain_name, user_name, domain_type = host, user, "unixpwd"
+                domain_type, domain_name, user_name = self.parse_account(user, host)
                 logger.info(f"[NetBackup] Authentification {domain_type} sur {base_url}/login")
                 login_resp = session.post(
                     f"{base_url}/login",
